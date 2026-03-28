@@ -10,11 +10,19 @@ const state = {
   clarification: null,
 };
 
+const audioState = {
+  mediaRecorder: null,
+  chunks: [],
+  recording: false,
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   bindChat();
   bindClarificationForm();
   bindModalCancel();
   bindCartEvents();
+  bindAudio();
+  bindImageUpload();
   renderCart();
 });
 
@@ -348,4 +356,132 @@ function jsonHeaders() {
 
 function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Audio (STT via Whisper) ──────────────────────────────────────────────────
+
+function bindAudio() {
+  const micBtn = document.getElementById('btn-mic');
+  if (!micBtn) return;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    micBtn.disabled = true;
+    micBtn.title = 'Micrófono no disponible en este navegador';
+  } else {
+    micBtn.addEventListener('click', toggleRecording);
+  }
+}
+
+async function toggleRecording() {
+  if (audioState.recording) {
+    stopRecording();
+  } else {
+    await startRecording();
+  }
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioState.chunks = [];
+    audioState.mediaRecorder = new MediaRecorder(stream);
+    audioState.mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) audioState.chunks.push(e.data);
+    };
+    audioState.mediaRecorder.onstop = () => {
+      const blob = new Blob(audioState.chunks, { type: 'audio/webm' });
+      stream.getTracks().forEach(t => t.stop());
+      transcribeAudio(blob);
+    };
+    audioState.mediaRecorder.start();
+    audioState.recording = true;
+    const btn = document.getElementById('btn-mic');
+    btn.classList.add('btn--recording');
+    btn.textContent = '⏹';
+    btn.title = 'Detener grabación';
+  } catch (err) {
+    appendChatMsg('assistant', `No se pudo acceder al micrófono: ${err.message}`);
+  }
+}
+
+function stopRecording() {
+  if (audioState.mediaRecorder && audioState.recording) {
+    audioState.mediaRecorder.stop();
+    audioState.recording = false;
+    const btn = document.getElementById('btn-mic');
+    btn.classList.remove('btn--recording');
+    btn.textContent = '🎤';
+    btn.title = 'Grabar mensaje de voz';
+  }
+}
+
+async function transcribeAudio(blob) {
+  const micBtn = document.getElementById('btn-mic');
+  micBtn.disabled = true;
+  micBtn.textContent = '⏳';
+  try {
+    const res = await fetch(`${API}/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/webm', 'X-Session-Token': state.sessionToken },
+      body: blob,
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error);
+    const text = (json.data.text || '').trim();
+    if (text) {
+      document.getElementById('chat-input').value = text;
+      sendChat();
+    }
+  } catch (err) {
+    appendChatMsg('assistant', `Error al transcribir audio: ${err.message}`);
+  } finally {
+    micBtn.disabled = false;
+    micBtn.textContent = '🎤';
+  }
+}
+
+// ─── Image Upload (Vision AI) ─────────────────────────────────────────────────
+
+function bindImageUpload() {
+  const imgBtn = document.getElementById('btn-image');
+  const fileInput = document.getElementById('image-file-input');
+  if (!imgBtn || !fileInput) return;
+
+  imgBtn.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    fileInput.value = '';
+    if (file) describeImage(file);
+  });
+}
+
+async function describeImage(file) {
+  const imgBtn = document.getElementById('btn-image');
+  imgBtn.disabled = true;
+  imgBtn.textContent = '⏳';
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const res = await fetch(`${API}/describe-image`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'image/jpeg',
+        'X-Session-Token': state.sessionToken,
+      },
+      body: arrayBuffer,
+    });
+    const json = await res.json();
+    if (!json.ok) {
+      appendChatMsg('assistant', `No pude leer la imagen: ${json.error}`);
+      return;
+    }
+    const text = (json.data.text || '').trim();
+    if (text) {
+      document.getElementById('chat-input').value = text;
+      sendChat();
+    }
+  } catch (err) {
+    appendChatMsg('assistant', `Error al procesar la imagen: ${err.message}`);
+  } finally {
+    imgBtn.disabled = false;
+    imgBtn.textContent = '📷';
+  }
 }

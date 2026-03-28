@@ -653,3 +653,42 @@
     align-items: flex-end;
   }
 }
+
+/* ─── Audio / Image input buttons ──────────────────────────────────────────── */
+
+.chat-input-icon-btn {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 1.1rem;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid #e2e8f0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.chat-input-icon-btn:hover:not(:disabled) {
+  background: #eef2ff;
+  border-color: #6366f1;
+}
+
+.chat-input-icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+@keyframes pulse-record {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+}
+
+.btn--recording {
+  background: #fee2e2 !important;
+  border-color: #dc2626 !important;
+  animation: pulse-record 1.2s ease infinite;
+}

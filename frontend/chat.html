@@ -48,12 +48,15 @@
 
             <!-- Input bar -->
             <div class="chat-input-bar">
+              <button class="chat-input-icon-btn" id="btn-mic" title="Grabar mensaje de voz" aria-label="Grabar mensaje de voz">🎤</button>
+              <button class="chat-input-icon-btn" id="btn-image" title="Subir foto o lista manuscrita" aria-label="Subir imagen">📷</button>
+              <input type="file" id="image-file-input" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" aria-hidden="true" />
               <label for="chat-input" class="sr-only">Escribe tu pedido</label>
               <input
                 id="chat-input"
                 class="chat-input"
                 type="text"
-                placeholder="Me gustaria hacer una compra para este mes..."
+                placeholder="Escribe, hablá o subí una foto..."
                 autocomplete="off"
               />
               <button class="chat-submit" id="btn-send" type="button" aria-label="Enviar">
