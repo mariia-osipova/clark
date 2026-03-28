@@ -1,0 +1,8 @@
+.env
+data/proxy_store.db
+data/catalog_snapshot.json
+data/product_semantic_index.json
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
