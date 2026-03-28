@@ -15,6 +15,7 @@ import pytest
 from backend.product_semantic_index import (
     search,
     rank_candidates,
+    find_alternatives,
     _normalize_text,
     _normalize_size,
     _brand_score,
@@ -162,3 +163,63 @@ class TestRankCandidates:
     def test_no_match_returns_empty(self):
         results = rank_candidates(CATALOG, "vino tinto")
         assert results == []
+
+
+# ─── search() semantic fallback ───────────────────────────────────────────────
+
+class TestSearchSemanticFallback:
+    def test_keyword_fallback_when_no_index(self, tmp_path, monkeypatch):
+        """With no index file on disk, search() must still return keyword results."""
+        import backend.product_semantic_index as mod
+        monkeypatch.setattr(mod, "INDEX_PATH", tmp_path / "nonexistent.json")
+        monkeypatch.setattr(mod, "_INDEX_CACHE", {})
+        results = search("leche", CATALOG)
+        ids = [p["id"] for p in results]
+        assert "p1" in ids or "p2" in ids or "p3" in ids
+
+    def test_semantic_search_broad_query(self, tmp_path, monkeypatch):
+        """
+        With a live semantic index, a broad query like 'para el desayuno' should
+        return at least one dairy/breakfast product.
+        Skipped if sentence-transformers is not installed.
+        """
+        st = pytest.importorskip("sentence_transformers")
+        import backend.product_semantic_index as mod
+        from backend.product_semantic_index import build_index
+
+        index_file = tmp_path / "index.json"
+        monkeypatch.setattr(mod, "INDEX_PATH", index_file)
+        monkeypatch.setattr(mod, "_INDEX_CACHE", {})
+        monkeypatch.setattr(mod, "_MODEL_CACHE", {})
+
+        build_index(CATALOG)
+        results = search("para el desayuno", CATALOG)
+        assert len(results) >= 1, "Broad query should return at least one result via semantic search"
+
+
+# ─── find_alternatives() ─────────────────────────────────────────────────────
+
+class TestFindAlternatives:
+    def test_excludes_oos(self):
+        """find_alternatives must never return out-of-stock items."""
+        results = find_alternatives("leche descremada", CATALOG)
+        ids = [p["id"] for p in results]
+        assert "p4" not in ids, "OOS product p4 must not appear in alternatives"
+
+    def test_same_category_filter(self):
+        """When category='Lácteos' all results must be from that category."""
+        results = find_alternatives("producto", CATALOG, category="Lácteos")
+        for p in results:
+            assert p["category"] == "Lácteos"
+
+    def test_falls_back_cross_category(self):
+        """If same-category pool is empty, return results from the full catalog."""
+        results = find_alternatives("algo", CATALOG, category="Bebidas Alcohólicas")
+        # No products in 'Bebidas Alcohólicas' in CATALOG, so should fall back
+        assert len(results) >= 1, "Should return cross-category fallback results"
+
+    def test_returns_only_in_stock(self):
+        """Result list must only contain products with available_quantity > 0."""
+        results = find_alternatives("leche", CATALOG)
+        for p in results:
+            assert p.get("available_quantity", 1) > 0

@@ -3,7 +3,7 @@ Run the LLM judge eval suite.
 Owner: Juan
 
 Usage:
-    python scripts/run_llm_judge_eval.py [--tags v1,v2] [--scenario-id v1_exact_product]
+    python scripts/run_llm_judge_eval.py [--tags v1,v2] [--scenario-id v1_exact_product] [--no-llm-judge]
 
 Outputs a summary table and exits with code 1 if any scenario fails.
 """
@@ -19,7 +19,7 @@ from backend.llm_eval_harness import SCENARIOS, judge_response
 from backend.chat_agent_agentic import handle_chat
 
 
-def run_scenarios(scenarios, verbose=False):
+def run_scenarios(scenarios, verbose=False, openai_client=None):
     results = []
     for s in scenarios:
         try:
@@ -33,6 +33,7 @@ def run_scenarios(scenarios, verbose=False):
                 reply=output.get("reply", ""),
                 cart=output.get("cart"),
                 clarification=output.get("clarification"),
+                openai_client=openai_client,
             )
         except Exception as e:
             from backend.llm_eval_harness import EvalResult
@@ -55,6 +56,7 @@ def main():
     parser.add_argument("--tags", help="Comma-separated tag filter, e.g. v1,cart")
     parser.add_argument("--scenario-id", help="Run a single scenario by ID")
     parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--no-llm-judge", action="store_true", help="Skip LLM judge calls (CI-safe)")
     args = parser.parse_args()
 
     scenarios = SCENARIOS
@@ -68,7 +70,15 @@ def main():
         print("No matching scenarios found.")
         sys.exit(0)
 
-    ok = run_scenarios(scenarios, verbose=args.verbose)
+    openai_client = None
+    if not args.no_llm_judge:
+        try:
+            from openai import OpenAI
+            openai_client = OpenAI()
+        except Exception as e:
+            print(f"[warn] LLM judge disabled: {e}")
+
+    ok = run_scenarios(scenarios, verbose=args.verbose, openai_client=openai_client)
     sys.exit(0 if ok else 1)
 
 

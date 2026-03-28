@@ -5,6 +5,7 @@ Owner: Juan
 Provides:
     search(query, catalog, top_k) -> list[dict]
     rank_candidates(candidates, query) -> list[dict]
+    find_alternatives(query, catalog, category, top_k) -> list[dict]
     build_index(catalog) -> None   (writes data/product_semantic_index.json)
 """
 
@@ -17,22 +18,27 @@ ROOT = Path(__file__).resolve().parent.parent
 INDEX_PATH = ROOT / "data" / "product_semantic_index.json"
 CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
 
+# Module-level cache: avoids reloading model and index on every call
+_MODEL_CACHE: dict = {}   # key "model" → SentenceTransformer instance
+_INDEX_CACHE: dict = {}   # key "entries" → list[{id, embedding}], "path_mtime" → float
+
 
 # ─── Public API ──────────────────────────────────────────────────────────────
 
 def search(query: str, catalog: list[dict], top_k: int = 10) -> list[dict]:
     """
     Return up to top_k products matching the query, re-ranked by brand/size signals.
-    V0: keyword filter → rank_candidates (brand +5, size +5, discount boost).
-    V2: upgrade to semantic retrieval using the index.
+    V2: semantic retrieval → rank_candidates (brand +5, size +5, discount boost).
+    Falls back to keyword filter if the semantic index is not available.
     """
-    tokens = _tokenize(query)
-    candidates = []
-    for product in catalog:
-        if product.get("available_quantity", 1) == 0:
-            continue
-        if _keyword_score(tokens, product) > 0:
-            candidates.append(product)
+    candidates = _semantic_candidates(query, catalog, top_k * 3)
+    if not candidates:
+        # Fallback: keyword filter (V0 behaviour, works without an index)
+        tokens = _tokenize(query)
+        candidates = [
+            p for p in catalog
+            if p.get("available_quantity", 1) != 0 and _keyword_score(tokens, p) > 0
+        ]
     return rank_candidates(candidates, query)[:top_k]
 
 
@@ -55,6 +61,36 @@ def rank_candidates(candidates: list[dict], query: str) -> list[dict]:
             scored.append((score, p))
     scored.sort(key=lambda x: -x[0])
     return [p for _, p in scored]
+
+
+def find_alternatives(
+    query: str,
+    catalog: list[dict],
+    category: str | None = None,
+    top_k: int = 3,
+) -> list[dict]:
+    """
+    Return up to top_k in-stock alternatives when the exact match is unavailable.
+    Filters to the given category first; if that yields nothing, searches the full catalog.
+    Out-of-stock items are always excluded.
+    """
+    in_stock = [p for p in catalog if p.get("available_quantity", 1) != 0]
+
+    pool = in_stock
+    if category:
+        category_pool = [p for p in in_stock if p.get("category", "") == category]
+        if category_pool:
+            pool = category_pool
+
+    candidates = _semantic_candidates(query, pool, top_k * 3)
+    if not candidates:
+        tokens = _tokenize(query)
+        candidates = [p for p in pool if _keyword_score(tokens, p) > 0]
+        if not candidates:
+            # Last resort: return anything in-stock from pool, skip re-ranking
+            return pool[:top_k]
+
+    return rank_candidates(candidates, query)[:top_k]
 
 
 def build_index(catalog: list[dict]) -> None:
@@ -177,6 +213,70 @@ def _normalize_size(text: str) -> tuple[float, str] | None:
     if unit in _SOLID_UNITS:
         return (value * _SOLID_UNITS[unit], "solid")
     return None
+
+
+def _load_model():
+    """Lazy-load the sentence-transformer model, cached at module level."""
+    if "model" not in _MODEL_CACHE:
+        from sentence_transformers import SentenceTransformer
+        _MODEL_CACHE["model"] = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+    return _MODEL_CACHE["model"]
+
+
+def _cosine(a: list[float], b: list[float]) -> float:
+    """Cosine similarity between two vectors (assumed unit-normalised by sentence-transformers)."""
+    dot = sum(x * y for x, y in zip(a, b))
+    return dot
+
+
+def _load_index() -> list[dict]:
+    """Load and cache the semantic index from disk. Returns [] if index missing."""
+    try:
+        mtime = INDEX_PATH.stat().st_mtime
+    except FileNotFoundError:
+        return []
+
+    if _INDEX_CACHE.get("path_mtime") != mtime:
+        with open(INDEX_PATH) as f:
+            data = json.load(f)
+        _INDEX_CACHE["entries"] = data.get("entries", [])
+        _INDEX_CACHE["path_mtime"] = mtime
+
+    return _INDEX_CACHE["entries"]
+
+
+def _semantic_candidates(query: str, catalog: list[dict], top_k: int) -> list[dict]:
+    """
+    Encode query, compute cosine similarity against the persisted index,
+    and return the top_k in-stock products ordered by similarity.
+    Returns [] if sentence-transformers is not installed or index is missing.
+    """
+    try:
+        model = _load_model()
+    except (ImportError, Exception):
+        return []
+
+    entries = _load_index()
+    if not entries:
+        return []
+
+    # Build a fast id → product lookup (only in-stock items)
+    id_to_product = {
+        p["id"]: p for p in catalog if p.get("available_quantity", 1) != 0
+    }
+
+    query_vec = model.encode([query], convert_to_numpy=True)[0].tolist()
+
+    scored = []
+    for entry in entries:
+        pid = entry["id"]
+        if pid not in id_to_product:
+            continue  # product removed from catalog or OOS
+        sim = _cosine(query_vec, entry["embedding"])
+        scored.append((sim, id_to_product[pid]))
+
+    scored.sort(key=lambda x: -x[0])
+    return [p for _, p in scored[:top_k]]
 
 
 def _brand_score(query_tokens: list[str], product: dict) -> float:

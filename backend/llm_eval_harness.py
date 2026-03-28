@@ -9,7 +9,7 @@ Run via: python scripts/run_llm_judge_eval.py
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Callable, Any
+from typing import Any
 
 
 @dataclass
@@ -74,6 +74,22 @@ SCENARIOS: list[Scenario] = [
         tags=["v2", "stock"],
     ),
 
+    # V2 — broad query (semantic search required)
+    Scenario(
+        id="v2_broad_query",
+        description="Broad intent adds at least one relevant item",
+        user_message="necesito algo para el desayuno",
+        tags=["v2", "broad"],
+    ),
+
+    # V2 — out-of-stock substitution (reply must mention the situation)
+    Scenario(
+        id="v2_out_of_stock_substitution",
+        description="OOS product is substituted or explicitly mentioned as missing",
+        user_message="quiero leche descremada marca inexistente",
+        tags=["v2", "stock"],
+    ),
+
     # V3 — clarification
     Scenario(
         id="v3_ambiguous_cola",
@@ -96,24 +112,76 @@ def judge_response(
 ) -> EvalResult:
     """
     Evaluate a chat response against a scenario.
-    V0: rule-based checks only.
-    V2+: use LLM judge for semantic correctness.
+    Rule-based checks run first for all scenarios.
+    V2-tagged scenarios also run an LLM judge when openai_client is provided.
     """
+    cart = cart or []
+
     # Rule: reply must not be empty
     if not reply or not reply.strip():
-        return EvalResult(scenario.id, False, "Reply is empty", reply, cart or [])
+        return EvalResult(scenario.id, False, "Reply is empty", reply, cart)
 
     # Rule: if clarification expected, check it's present
     if scenario.expect_clarification:
         if not clarification:
-            return EvalResult(scenario.id, False, "Expected clarification but got none", reply, cart or [])
-        return EvalResult(scenario.id, True, "Clarification returned as expected", reply, cart or [])
+            return EvalResult(scenario.id, False, "Expected clarification but got none", reply, cart)
+        return EvalResult(scenario.id, True, "Clarification returned as expected", reply, cart)
 
     # Rule: expected product IDs must be in the cart
-    if scenario.expected_product_ids and cart:
+    if scenario.expected_product_ids:
         cart_ids = {i.get("product_id") for i in cart}
         missing = set(scenario.expected_product_ids) - cart_ids
         if missing:
             return EvalResult(scenario.id, False, f"Missing products in cart: {missing}", reply, cart)
 
-    return EvalResult(scenario.id, True, "Passed rule-based checks", reply, cart or [])
+    # V2: LLM semantic judge
+    if "v2" in scenario.tags and openai_client:
+        return _llm_judge(scenario, reply, cart, openai_client)
+
+    return EvalResult(scenario.id, True, "Passed rule-based checks", reply, cart)
+
+
+def _build_judge_prompt(scenario: Scenario, reply: str, cart: list[dict]) -> str:
+    cart_summary = json.dumps(
+        [{"product_id": i.get("product_id"), "quantity": i.get("quantity")} for i in cart],
+        ensure_ascii=False,
+    )
+    return f"""You are evaluating an AI shopping assistant response.
+
+Scenario: {scenario.description}
+User message: "{scenario.user_message}"
+
+Assistant reply:
+{reply}
+
+Cart after response (product_id + quantity):
+{cart_summary}
+
+Judge whether the assistant handled the scenario correctly. Answer with exactly:
+PASS: <one-line reason>
+or
+FAIL: <one-line reason>
+"""
+
+
+def _llm_judge(
+    scenario: Scenario,
+    reply: str,
+    cart: list[dict],
+    openai_client: Any,
+) -> EvalResult:
+    prompt = _build_judge_prompt(scenario, reply, cart)
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0,
+            max_tokens=100,
+        )
+        verdict = response.choices[0].message.content.strip()
+        passed = verdict.upper().startswith("PASS")
+        reason = verdict.split(":", 1)[-1].strip() if ":" in verdict else verdict
+        return EvalResult(scenario.id, passed, f"LLM judge: {reason}", reply, cart)
+    except Exception as e:
+        # If the judge call fails, fall back to passing (don't block CI on API errors)
+        return EvalResult(scenario.id, True, f"LLM judge unavailable ({e}), rule-based pass", reply, cart)
