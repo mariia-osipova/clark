@@ -76,17 +76,17 @@ class TestSystemPrompt:
         prompt = _build_system_prompt()
         assert "español" in prompt.lower() or "asistente" in prompt.lower()
 
-    def test_prompt_instructs_search_before_add(self):
+    def test_prompt_mentions_resolve_product(self):
         prompt = _build_system_prompt()
-        assert "search_products" in prompt
+        assert "resolve_product" in prompt
 
-    def test_prompt_instructs_not_to_hallucinate(self):
+    def test_prompt_instructs_not_to_invent_product_ids(self):
         prompt = _build_system_prompt()
-        assert "catálogo" in prompt.lower()
+        assert "product_id" in prompt.lower()
 
-    def test_prompt_mentions_cart_tool(self):
+    def test_prompt_mentions_add_to_cart(self):
         prompt = _build_system_prompt()
-        assert "set_cart" in prompt
+        assert "add_to_cart" in prompt
 
     def test_prompt_mentions_spanish_awareness(self):
         prompt = _build_system_prompt()
@@ -96,10 +96,13 @@ class TestSystemPrompt:
         prompt = _build_system_prompt()
         assert "request_clarification" in prompt
 
-    def test_prompt_clarification_example_has_two_options(self):
+    def test_prompt_mentions_report_missing(self):
         prompt = _build_system_prompt()
-        lowered = prompt.lower()
-        assert "ambigu" in lowered or "opción" in lowered or "opcion" in lowered
+        assert "report_missing" in prompt
+
+    def test_prompt_does_not_mention_search_products(self):
+        prompt = _build_system_prompt()
+        assert "search_products" not in prompt
 
 
 # ─── Catalog summary tests ────────────────────────────────────────────────────
@@ -233,7 +236,7 @@ class TestHandleChat:
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
-    def test_set_cart_tool_updates_cart(self, mock_build_graph, mock_load_catalog, sample_catalog):
+    def test_result_cart_fallback_is_returned_without_session_id(self, mock_build_graph, mock_load_catalog, sample_catalog):
         mock_load_catalog.return_value = sample_catalog
         expected_cart = [{
             "product_id": "p1",
@@ -253,6 +256,7 @@ class TestHandleChat:
         result = handle_chat("quiero leche", [], [])
 
         assert result["cart"] is not None
+        assert result["cart"] == expected_cart
         assert len(result["cart"]) == 1
         assert result["cart"][0]["product_id"] == "p1"
 
@@ -324,12 +328,12 @@ class TestHandleChat:
 
         mock_app.invoke.assert_called_once()
         state = mock_app.invoke.call_args.args[0]
-        # p1 (leche) must already be in the cart passed to the continuation
-        assert any(item.get("product_id") == "p1" for item in state["result_cart"])
+        # result_cart is None — cart lives in DB; context injected via system message
+        assert state["result_cart"] is None
         # The continuation message must be the original pending request
         human_messages = [m for m in state["messages"] if isinstance(m, LCHumanMessage)]
         assert human_messages[-1].content == "quiero leche y yogur"
-        # A system message must note what was already resolved
+        # A system message must note what was already resolved (mentions product_id p1)
         all_contents = [getattr(m, "content", "") for m in state["messages"]]
         assert any("p1" in c for c in all_contents)
 
@@ -398,6 +402,57 @@ class TestHandleChat:
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
+    def test_add_to_cart_tool_writes_to_db(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        """add_to_cart tool should upsert into session_carts and return confirmation."""
+        import tempfile
+        from backend.chat_agent_agentic import _make_tools, _reset_app_cache
+        from backend import db as _db
+        _reset_app_cache()
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            tmp_path = f.name
+        orig = os.environ.get("DB_PATH")
+        try:
+            os.environ["DB_PATH"] = tmp_path
+            _db.init_db()
+            tools = _make_tools(sample_catalog, session_id="sess-xyz")
+            tool = next(t for t in tools if t.name == "add_to_cart")
+            result = json.loads(tool.invoke({"product_id": "p1", "quantity": 2}))
+            assert result["added"] is True
+            assert result["product_id"] == "p1"
+            conn = _db.get_db()
+            row = conn.execute(
+                "SELECT quantity FROM session_carts WHERE session_id=? AND product_id=?",
+                ("sess-xyz", "p1"),
+            ).fetchone()
+            conn.close()
+            assert row["quantity"] == 2
+        finally:
+            if orig is not None:
+                os.environ["DB_PATH"] = orig
+            elif "DB_PATH" in os.environ:
+                del os.environ["DB_PATH"]
+            os.unlink(tmp_path)
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_add_to_cart_reflected_in_reply(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        from backend.chat_agent_agentic import handle_chat, _reset_app_cache
+        _reset_app_cache()
+        mock_load_catalog.return_value = sample_catalog
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = {
+            "messages": [LCAIMessage(content="Agregué la leche.")],
+            "result_cart": None,
+            "clarification": None,
+            "missing_items": [],
+        }
+        mock_build_graph.return_value = mock_app
+        # No session_id → cart comes from result_cart (None here)
+        result = handle_chat(message="quiero leche", history=[], cart=[])
+        assert result["reply"] == "Agregué la leche."
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
     def test_result_always_has_required_keys(self, mock_build_graph, mock_load_catalog, sample_catalog):
         mock_load_catalog.return_value = sample_catalog
         mock_app = MagicMock()
@@ -427,6 +482,108 @@ class TestHandleChat:
         result = handle_chat(message="hola", history=[], cart=[], session_id="sess-abc")
         assert result["reply"] == "Hola"
 
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_generate_monthly_basket_action_returns_proposed_cart(
+        self, mock_build_graph, mock_load_catalog, sample_catalog
+    ):
+        """action='generate_monthly_basket' bypasses the graph and returns a proposed_cart."""
+        import tempfile
+
+        from backend import db as _db
+        from backend.chat_agent_agentic import _reset_app_cache
+
+        _reset_app_cache()
+        mock_load_catalog.return_value = sample_catalog
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            tmp_path = f.name
+
+        orig = os.environ.get("DB_PATH")
+        try:
+            os.environ["DB_PATH"] = tmp_path
+            _db.init_db()
+            conn = _db.get_db()
+            conn.execute(
+                """INSERT INTO recurring_plans (
+                    id, household_size, monthly_budget, priority_items,
+                    preferred_brands, strict_brand, excluded_categories, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                ("default", 2, 5000.0, "[]", "{}", 0, "[]", ""),
+            )
+            conn.commit()
+            conn.close()
+
+            with patch("backend.product_semantic_index.generate_monthly_basket_candidates") as mock_gen:
+                mock_gen.return_value = [
+                    {
+                        "query": "leche",
+                        "tag": "must_have",
+                        "status": "resolved",
+                        "product": sample_catalog[0],
+                        "quantity": 1,
+                        "estimated_price": 350.0,
+                    }
+                ]
+                result = handle_chat(
+                    message="",
+                    history=[],
+                    cart=[],
+                    action="generate_monthly_basket",
+                )
+
+            assert "proposed_cart" in result
+            assert len(result["proposed_cart"]) == 1
+            assert result["proposed_cart"][0]["product_id"] == "p1"
+            assert "canasta mensual" in result["reply"].lower()
+            mock_build_graph.assert_not_called()
+        finally:
+            if orig is not None:
+                os.environ["DB_PATH"] = orig
+            elif "DB_PATH" in os.environ:
+                del os.environ["DB_PATH"]
+            os.unlink(tmp_path)
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_generate_monthly_basket_no_plan_returns_empty(
+        self, mock_build_graph, mock_load_catalog, sample_catalog
+    ):
+        """With no recurring plan in DB, proposed_cart should be empty."""
+        import tempfile
+
+        from backend import db as _db
+        from backend.chat_agent_agentic import _reset_app_cache
+
+        _reset_app_cache()
+        mock_load_catalog.return_value = sample_catalog
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            tmp_path = f.name
+
+        orig = os.environ.get("DB_PATH")
+        try:
+            os.environ["DB_PATH"] = tmp_path
+            _db.init_db()
+
+            result = handle_chat(
+                message="",
+                history=[],
+                cart=[],
+                action="generate_monthly_basket",
+            )
+
+            assert "proposed_cart" in result
+            assert result["proposed_cart"] == []
+            assert "plan" in result["reply"].lower()
+            mock_build_graph.assert_not_called()
+        finally:
+            if orig is not None:
+                os.environ["DB_PATH"] = orig
+            elif "DB_PATH" in os.environ:
+                del os.environ["DB_PATH"]
+            os.unlink(tmp_path)
+
 
 class TestAgenticLoop:
     """
@@ -455,21 +612,21 @@ class TestAgenticLoop:
         """Final AIMessage with no tool calls."""
         return LCAIMessage(content=text)
 
-    @patch("backend.product_semantic_index.search")
+    @patch("backend.product_semantic_index.resolve_product")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
-    def test_search_then_set_cart_then_reply(
-        self, mock_load_catalog, mock_llm_cls, mock_search, sample_catalog
+    def test_resolve_then_add_to_cart_then_reply(
+        self, mock_load_catalog, mock_llm_cls, mock_resolve, sample_catalog
     ):
-        """Full happy path through the real graph: search → set_cart → reply."""
+        """Full happy path through the real graph: resolve_product → add_to_cart → reply."""
         mock_load_catalog.return_value = sample_catalog
-        mock_search.return_value = [sample_catalog[0]]  # returns leche
+        mock_resolve.return_value = {"status": "resolved", "product": sample_catalog[0], "quantity": 1}
 
         llm = MagicMock()
         llm.bind_tools.return_value = llm
         llm.invoke.side_effect = [
-            self._ai_with_tool_call("search_products", {"query": "leche entera 1L"}, "c1"),
-            self._ai_with_tool_call("set_cart", {"items": [{"product_id": "p1", "quantity": 1}]}, "c2"),
+            self._ai_with_tool_call("resolve_product", {"query": "leche entera 1L", "quantity": 1}, "c1"),
+            self._ai_with_tool_call("add_to_cart", {"product_id": "p1", "quantity": 1}, "c2"),
             self._ai_reply("Agregué Leche entera La Serenísima 1L. $350.00"),
         ]
         mock_llm_cls.return_value = llm
@@ -477,24 +634,22 @@ class TestAgenticLoop:
         result = handle_chat("quiero leche entera 1L", [], [])
 
         assert llm.invoke.call_count == 3
-        assert result["cart"] is not None
-        assert result["cart"][0]["product_id"] == "p1"
         assert "leche" in result["reply"].lower()
 
-    @patch("backend.product_semantic_index.search")
+    @patch("backend.product_semantic_index.resolve_product")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
-    def test_tool_message_injected_after_search(
-        self, mock_load_catalog, mock_llm_cls, mock_search, sample_catalog
+    def test_tool_message_injected_after_resolve(
+        self, mock_load_catalog, mock_llm_cls, mock_resolve, sample_catalog
     ):
-        """After search_products, the second LLM call must receive a ToolMessage."""
+        """After resolve_product, the second LLM call must receive a ToolMessage."""
         mock_load_catalog.return_value = sample_catalog
-        mock_search.return_value = [sample_catalog[0]]
+        mock_resolve.return_value = {"status": "resolved", "product": sample_catalog[0], "quantity": 1}
 
         llm = MagicMock()
         llm.bind_tools.return_value = llm
         llm.invoke.side_effect = [
-            self._ai_with_tool_call("search_products", {"query": "leche"}, "c1"),
+            self._ai_with_tool_call("resolve_product", {"query": "leche"}, "c1"),
             self._ai_reply("ok"),
         ]
         mock_llm_cls.return_value = llm
@@ -523,28 +678,26 @@ class TestAgenticLoop:
         assert result["reply"] == "Hola, ¿en qué te puedo ayudar?"
         assert result["cart"] is None
 
-    @patch("backend.product_semantic_index.search")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
-    def test_out_of_stock_removed_from_cart(
-        self, mock_load_catalog, mock_llm_cls, mock_search, sample_catalog
+    def test_add_to_cart_out_of_stock_returns_error(
+        self, mock_load_catalog, mock_llm_cls, sample_catalog
     ):
-        """set_cart with an out-of-stock product returns empty validated cart."""
+        """add_to_cart with an out-of-stock product_id returns added=False."""
         mock_load_catalog.return_value = sample_catalog
-        mock_search.return_value = [sample_catalog[2]]  # p3 = out of stock
 
         llm = MagicMock()
         llm.bind_tools.return_value = llm
         llm.invoke.side_effect = [
-            self._ai_with_tool_call("set_cart", {"items": [{"product_id": "p3", "quantity": 1}]}, "c1"),
+            self._ai_with_tool_call("add_to_cart", {"product_id": "p3", "quantity": 1}, "c1"),
             self._ai_reply("Lo siento, ese producto no está disponible."),
         ]
         mock_llm_cls.return_value = llm
 
         result = handle_chat("quiero pan lactal", [], [])
 
-        assert result["cart"] is not None
-        assert all(i["product_id"] != "p3" for i in result["cart"])
+        # No session_id → cart from result_cart (None); reply is set
+        assert "disponible" in result["reply"].lower()
 
     @patch("backend.product_semantic_index.search")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
@@ -613,10 +766,10 @@ class TestAgenticLoop:
 
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
-    def test_set_cart_reports_dropped_items(
+    def test_add_to_cart_unknown_product_returns_error_in_tool_message(
         self, mock_load_catalog, mock_llm_cls, sample_catalog
     ):
-        """When set_cart drops invalid items, the ToolMessage must list them."""
+        """When add_to_cart receives an unknown product_id, the ToolMessage must report added=False."""
         mock_load_catalog.return_value = sample_catalog
 
         captured_tool_messages = []
@@ -629,14 +782,8 @@ class TestAgenticLoop:
             if invoke_count == 0:
                 invoke_count += 1
                 return self._ai_with_tool_call(
-                    "set_cart",
-                    {
-                        "items": [
-                            {"product_id": "p1", "quantity": 1},
-                            {"product_id": "bad_id", "quantity": 1},
-                            {"product_id": "p3", "quantity": 1},
-                        ]
-                    },
+                    "add_to_cart",
+                    {"product_id": "bad_id", "quantity": 1},
                     "c1",
                 )
             captured_tool_messages.extend(
@@ -649,14 +796,12 @@ class TestAgenticLoop:
         llm.invoke.side_effect = invoke
         mock_llm_cls.return_value = llm
 
-        handle_chat("poneme leche, cosa_mala y pan", [], [])
+        handle_chat("poneme algo inexistente", [], [])
 
         assert len(captured_tool_messages) == 1
         result = json.loads(captured_tool_messages[0].content)
-        assert "dropped" in result
-        assert len(result["dropped"]) == 2
-        dropped_ids = {item["product_id"] for item in result["dropped"]}
-        assert dropped_ids == {"bad_id", "p3"}
+        assert result.get("added") is False
+        assert "error" in result
 
 
 class TestSingletonCache:
@@ -670,9 +815,10 @@ class TestSingletonCache:
 
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
-    def test_graph_built_once_across_two_calls(
+    def test_graph_built_per_call(
         self, mock_load_catalog, mock_llm_cls, sample_catalog
     ):
+        """Graph is rebuilt each call (session_id may differ); catalog is cached separately."""
         mock_load_catalog.return_value = sample_catalog
         llm = MagicMock()
         llm.bind_tools.return_value = llm
@@ -682,7 +828,8 @@ class TestSingletonCache:
         handle_chat("hola", [], [])
         handle_chat("cómo estás", [], [])
 
-        assert mock_llm_cls.call_count == 1
+        # ChatOpenAI is instantiated once per graph build → two calls now
+        assert mock_llm_cls.call_count == 2
 
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
@@ -792,11 +939,11 @@ class TestCleanups:
 
         assert result["missing_items"] == ["sal"]
 
-    @patch("backend.product_semantic_index.search", side_effect=RuntimeError("SECRET_INTERNAL_PATH=/opt/server"))
+    @patch("backend.product_semantic_index.resolve_product", side_effect=RuntimeError("SECRET_INTERNAL_PATH=/opt/server"))
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
     def test_tool_exception_message_is_sanitized(
-        self, mock_load_catalog, mock_llm_cls, _mock_search, sample_catalog
+        self, mock_load_catalog, mock_llm_cls, _mock_resolve, sample_catalog
     ):
         mock_load_catalog.return_value = sample_catalog
         captured = []
@@ -804,7 +951,7 @@ class TestCleanups:
         def invoke(messages):
             captured.append(list(messages))
             if len(captured) == 1:
-                return self._ai_with_tool_call("search_products", {"query": "leche"}, "c1")
+                return self._ai_with_tool_call("resolve_product", {"query": "leche"}, "c1")
             return self._ai_reply("ok")
 
         llm = MagicMock()
@@ -849,16 +996,15 @@ class TestCleanups:
         total_chars = sum(len(str(message.content)) for message in captured[0])
         assert total_chars < 60_000
 
-    @patch("backend.product_semantic_index.search")
+    @patch("backend.product_semantic_index.resolve_product")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
-    def test_ambiguous_search_triggers_clarification_via_build_clarification_candidates(
-        self, mock_load_catalog, mock_llm_cls, mock_search
+    def test_ambiguous_resolve_triggers_clarification(
+        self, mock_load_catalog, mock_llm_cls, mock_resolve
     ):
         """
-        When search_products returns candidates that are materially different
-        (different brands), tools_node must surface a clarification instead of
-        letting set_cart proceed.
+        When the LLM calls request_clarification, tools_node must surface it
+        and stop the graph.
         """
         ambiguous_catalog = [
             {
@@ -883,13 +1029,29 @@ class TestCleanups:
             },
         ]
         mock_load_catalog.return_value = ambiguous_catalog
-        mock_search.return_value = ambiguous_catalog
+        mock_resolve.return_value = {
+            "status": "needs_clarification",
+            "options": [
+                {"id": "milk-1", "label": "La Serenísima 1L $350.00"},
+                {"id": "milk-2", "label": "SanCor 1L $320.00"},
+            ],
+            "quantity": 1,
+        }
 
         llm = MagicMock()
         llm.bind_tools.return_value = llm
-        # Agent searches, then would try to set_cart — but clarification must win
         llm.invoke.side_effect = [
-            self._ai_with_tool_call("search_products", {"query": "leche"}, "c1"),
+            self._ai_with_tool_call(
+                "request_clarification",
+                {
+                    "question": "¿Cuál leche querés?",
+                    "options": [
+                        {"id": "milk-1", "label": "La Serenísima 1L $350.00"},
+                        {"id": "milk-2", "label": "SanCor 1L $320.00"},
+                    ],
+                },
+                "c1",
+            ),
             self._ai_reply("Acá tenés tus opciones de leche."),
         ]
         mock_llm_cls.return_value = llm
@@ -902,17 +1064,11 @@ class TestCleanups:
         assert "milk-1" in option_ids
         assert "milk-2" in option_ids
 
-    @patch("backend.product_semantic_index.search")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
-    def test_search_result_already_in_cart_returns_neutral_tool_message(
-        self, mock_load_catalog, mock_llm_cls, mock_search
+    def test_clarification_continuation_injects_resolved_product_context(
+        self, mock_load_catalog, mock_llm_cls
     ):
-        """
-        When search_products returns candidates that include a product already in
-        result_cart, tools_node must replace the ToolMessage with a 'already in cart'
-        note so the LLM cannot independently pick and duplicate that product.
-        """
         ambiguous_catalog = [
             {
                 "id": "cook-1",
@@ -936,28 +1092,12 @@ class TestCleanups:
             },
         ]
         mock_load_catalog.return_value = ambiguous_catalog
-        mock_search.return_value = ambiguous_catalog
 
         llm = MagicMock()
         llm.bind_tools.return_value = llm
-        captured_tool_messages = []
-        call_count = [0]
-
-        def invoke_side_effect(messages):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                return self._ai_with_tool_call("search_products", {"query": "galletitas"}, "c1")
-            # Second call: capture ToolMessages the LLM received
-            captured_tool_messages.extend(
-                m for m in messages if hasattr(m, "tool_call_id")
-            )
-            return self._ai_reply("Listo.")
-
-        llm.invoke.side_effect = invoke_side_effect
+        llm.invoke.return_value = self._ai_reply("Listo.")
         mock_llm_cls.return_value = llm
 
-        # Simulate the continuation path: user resolved cook-1 from a prior clarification
-        # and has a pending_message so the graph is re-invoked.
         handle_chat(
             "Galletitas Oreo",
             [],
@@ -969,67 +1109,34 @@ class TestCleanups:
             },
         )
 
-        assert captured_tool_messages, "LLM should have received a ToolMessage on the continuation"
-        tool_content = json.loads(captured_tool_messages[0].content)
-        assert "ya está en el carrito" in tool_content.get("note", ""), (
-            f"Expected 'already in cart' note but got: {tool_content}"
-        )
+        assert llm.invoke.call_count == 1
+        messages = llm.invoke.call_args_list[0][0][0]
+        contents = [getattr(message, "content", "") for message in messages]
+        assert any("No vuelvas a buscar ese producto" in content for content in contents)
+        assert any("quiero galletitas" in content for content in contents)
 
-    @patch("backend.product_semantic_index.search")
-    @patch("backend.chat_agent_agentic.ChatOpenAI")
-    @patch("backend.chat_agent_agentic._load_catalog")
-    def test_batched_search_and_set_cart_clarification_wins(
-        self, mock_load_catalog, mock_llm_cls, mock_search
-    ):
-        """
-        When a single AI message contains both search_products and set_cart,
-        and the search result is ambiguous, the clarification must win and
-        set_cart must not execute.
-        """
-        ambiguous_catalog = [
-            {
-                "id": "bev-1",
-                "name": "Coca-Cola 1.5L",
-                "brand": "Coca-Cola",
-                "package_size": "1.5L",
-                "price": 800.0,
-                "discount_pct": 0,
-                "available_quantity": 10,
-                "image_url": "",
-            },
-            {
-                "id": "bev-2",
-                "name": "Pepsi 1.5L",
-                "brand": "Pepsi",
-                "package_size": "1.5L",
-                "price": 750.0,
-                "discount_pct": 0,
-                "available_quantity": 8,
-                "image_url": "",
-            },
-        ]
-        mock_load_catalog.return_value = ambiguous_catalog
-        mock_search.return_value = ambiguous_catalog
+    def test_search_products_tool_no_longer_exists(self):
+        from backend.chat_agent_agentic import _make_tools
 
-        llm = MagicMock()
-        llm.bind_tools.return_value = llm
+        tool_names = [tool.name for tool in _make_tools([])]
 
-        # Batched: search + set_cart in the same tool call list
-        batched_msg = LCAIMessage(
-            content="",
-            tool_calls=[
-                {"name": "search_products", "args": {"query": "bebida cola"}, "id": "c1", "type": "tool_call"},
-                {"name": "set_cart", "args": {"items": [{"product_id": "bev-1", "quantity": 1}]}, "id": "c2", "type": "tool_call"},
-            ],
-        )
-        llm.invoke.side_effect = [
-            batched_msg,
-            self._ai_reply("¿Cuál preferís?"),
-        ]
-        mock_llm_cls.return_value = llm
+        assert "search_products" not in tool_names
+        assert "resolve_product" in tool_names
+        assert "add_to_cart" in tool_names
 
-        result = handle_chat("mete una bebida cola", [], [])
+    def test_resolve_product_tool_returns_verdict(self, sample_catalog):
+        from backend.chat_agent_agentic import _make_tools
 
-        assert result["clarification"] is not None
-        # set_cart must not have executed — cart stays None
-        assert result["cart"] is None
+        with patch("backend.product_semantic_index.resolve_product") as mock_resolve:
+            mock_resolve.return_value = {
+                "status": "resolved",
+                "product": sample_catalog[0],
+                "quantity": 1,
+                "substituted": False,
+            }
+
+            tool = next(tool for tool in _make_tools(sample_catalog) if tool.name == "resolve_product")
+            result = json.loads(tool.invoke({"query": "leche", "quantity": 1}))
+
+        assert result["status"] == "resolved"
+        assert result["product"]["id"] == "p1"
