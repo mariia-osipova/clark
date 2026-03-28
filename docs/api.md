@@ -66,9 +66,12 @@ Send a chat message. Returns assistant reply, authoritative cart state, clarific
   "reply": "string",
   "cart": [],
   "clarification": null,
-  "missing_items": []
+  "missing_items": [],
+  "dropped_items": []
 }
 ```
+
+`dropped_items` is always present (may be empty). It lists product names that were in the request cart but were dropped because they are out-of-stock or unknown. The frontend should remove these from localStorage when the field is non-empty.
 
 **Cart item shape:**
 ```json
@@ -101,22 +104,22 @@ Send a chat message. Returns assistant reply, authoritative cart state, clarific
 
 Notes:
 - When `clarification` is present, `reply` mirrors the clarification question so the chat transcript stays readable.
-- Clarification continuity is server-validated by `X-Session-Token` plus `pending_request_id`; stale or foreign selections return `400`.
+- **Clarification lifecycle:** (1) Server issues clarification → persists `pending_request_id` in `pending_clarifications` table. (2) Client sends `clarification_response` with same `pending_request_id`. (3) Server validates: must exist and be unresolved for this session. Stale or unknown IDs return `400 "stale or unknown clarification request"`.
 - `missing_items` contains normalized ingredient/product names the agent could not find while decomposing a recipe or broad shopping goal.
 - Server-side history is trimmed by character budget before calling the model; clients can still send full local history.
 - When `action` is `generate_monthly_basket`, the response may also include `proposed_cart` and `cart` stays `null`.
 
+**Cart authority model:** `session_carts` in the DB is the authoritative source. `localStorage` is a display cache. On every server response that includes `cart`, the frontend must replace (not merge) localStorage with the returned value. On page load, `GET /api/v1/cart?session_id=...` must be called and the result must replace localStorage.
+
 ---
 
-## POST /api/v1/auth/register
+## POST /api/v1/auth/register — NOT IMPLEMENTED
 
-**Request:** `{ "email": "string", "password": "string" }`
-**Response data:** `{ "token": "string", "user_id": "string" }`
+Returns `501 Not Implemented`. Stubbed until after the hackathon.
 
-## POST /api/v1/auth/login
+## POST /api/v1/auth/login — NOT IMPLEMENTED
 
-**Request:** `{ "email": "string", "password": "string" }`
-**Response data:** `{ "token": "string", "user_id": "string" }`
+Returns `501 Not Implemented`. Stubbed until after the hackathon.
 
 ---
 
@@ -128,10 +131,12 @@ Requires header: `X-Session-Token: <token>`
 
 ## POST /api/v1/orders
 
-Place a new order from the current cart.
+Place a new order from the server-side session cart. The cart in the request body is ignored; the server reads from `session_carts` (authoritative source).
 
-**Request:** `{ "cart": [ <cart items> ] }`
+**Header:** `X-Session-Token: <session-token>` (or `session_id` in body as fallback)
+**Request:** `{ "session_id": "string" }` (optional if header is present)
 **Response data:** `{ "order_id": "string", "total": 0.00 }`
+**Errors:** `400` if session not provided or server cart is empty.
 
 ---
 
@@ -219,9 +224,12 @@ Calls `generate_monthly_basket_candidates()` from `product_semantic_index.py`.
       "tag": "must_have | recurring | offer | suggested"
     }
   ],
-  "total": 0.00
+  "total": 0.00,
+  "budget_exceeded": false
 }
 ```
+
+`budget_exceeded` is `true` when the sum of proposed items exceeds the plan's `monthly_budget`. It is `false` when no budget is set.
 
 ## POST /api/v1/recurring-plan/accept
 

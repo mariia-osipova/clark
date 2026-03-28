@@ -2,6 +2,26 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Nacho — VERSION4: V4 Robustness Rebuild complete
+
+**Type:** feature + bugfix
+
+Completed the full V4 Robustness Rebuild across all 5 phases:
+
+- **Bug #5**: Removed `_generate_basket_stub()`. `generate_monthly_basket_candidates` is imported at module load; missing import fails fast.
+- **Bug #3**: `_handle_orders_post()` now reads cart from `get_session_cart(session_id)` (DB), not request body. Requires `X-Session-Token` header or `session_id` in body.
+- **Bug #4**: `addToCart()` and `updateCartQty()` in `frontend/app.js` now sync to `POST /api/v1/cart` with optimistic rollback. `removeFromCart()` now rolls back on server failure.
+- **Phase 1**: `_validate_order_cart()` returns `(validated, dropped_names)` tuple. Chat response includes `dropped_items` field. Frontend removes dropped items from localStorage.
+- **Phase 2**: Clarification persistence — `save_pending_clarification()` called when agent returns a clarification. `resolve_pending_clarification()` validates on reply; returns 400 for stale/unknown IDs.
+- **Phase 3**: `POST /api/v1/recurring-plan/generate` adds `budget_exceeded: bool`. No stub path.
+- **Phase 4**: `_handle_chat()` split into `_normalize_chat_request()`, `_dispatch_chat()`, `_build_chat_response()`.
+- **Phase 5**: Auth endpoints marked NOT IMPLEMENTED in `docs/api.md`. Added clarification lifecycle, `dropped_items`, `budget_exceeded`, and cart authority model docs.
+- **Frontend**: Page load calls `GET /api/v1/cart` to sync server cart. Checkout sends `X-Session-Token` header.
+- **Tests**: Updated `TestValidateOrderCart` and `TestOrderTotal` for new tuple return. Rewrote `TestOrdersEndpoint` for session-based checkout.
+- **New file**: `scripts/migrate_v4_pending_clarifications.py` — creates `pending_clarifications` table on existing DBs.
+
+---
+
 ## 2026-03-28 — Jeremias — VERSION4 agent layer consolidated
 
 **Type:** feature
