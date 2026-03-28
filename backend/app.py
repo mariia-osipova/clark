@@ -46,7 +46,10 @@ def _validate_order_cart(cart: list, catalog: list) -> list:
             continue
         if product.get("available_quantity", 0) == 0:
             continue
-        qty = max(1, int(item.get("quantity", 1)))
+        try:
+            qty = max(1, int(item.get("quantity", 1)))
+        except (ValueError, TypeError):
+            qty = 1
         validated.append({
             "product_id": pid,
             "name": product.get("name", ""),
@@ -152,7 +155,7 @@ def _validate_chat_body(body: dict) -> tuple:
 def envelope(data=None, error=None, request_id=None):
     return {
         "ok": error is None,
-        "data": data or {},
+        "data": data if data is not None else {},
         "error": error,
         "request_id": request_id or str(uuid.uuid4()),
     }
@@ -164,12 +167,15 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def send_json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self._cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client disconnected — nothing to do
 
     def _cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -269,15 +275,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                 ).fetchall()
             finally:
                 conn.close()
-            orders = [
-                {
+            orders = []
+            for r in rows:
+                try:
+                    items = json.loads(r["cart_json"])
+                except Exception:
+                    items = []
+                orders.append({
                     "id": r["id"],
-                    "items": json.loads(r["cart_json"]),
+                    "items": items,
                     "total": r["total"],
                     "created_at": r["created_at"],
-                }
-                for r in rows
-            ]
+                })
             self.send_json(envelope(data={"orders": orders}))
         except Exception as e:
             _log.error("orders GET error: %s", e, exc_info=True)
@@ -373,8 +382,14 @@ class RequestHandler(BaseHTTPRequestHandler):
     # ─── Helpers ─────────────────────────────────────────────────────────────
 
     def _read_body(self) -> dict:
-        length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            return {}
+        if length <= 0:
+            return {}
+        if length > 1_000_000:  # 1 MB hard cap
+            _log.warning("request body too large (%d bytes), rejecting", length)
             return {}
         try:
             return json.loads(self.rfile.read(length))
