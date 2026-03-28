@@ -422,15 +422,15 @@ class TestResolveProduct:
         assert result["quantity"] == 2
         assert result["substituted"] is False
 
-    def test_needs_clarification_brand_mismatch(self, monkeypatch):
-        """Multiple brands in results → needs_clarification."""
+    def test_auto_picks_top_result_even_with_multiple_brands(self, monkeypatch):
+        """Multiple brands in results → resolved (auto-pick top result)."""
         import backend.product_semantic_index as mod
         monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
-        # "leche" matches p1 (Serenísima), p2 (SanCor), p3 (Serenísima) → brand mismatch
+        # "leche" matches multiple brands — should auto-pick top, not clarify
         result = resolve_product("leche entera 1L", 1, CATALOG)
-        assert result["status"] == "needs_clarification"
-        assert len(result["options"]) >= 2
+        assert result["status"] == "resolved"
+        assert result["product"] is not None
         assert result["quantity"] == 1
 
     def test_not_found_all_oos(self, monkeypatch):
@@ -491,7 +491,7 @@ class TestResolveProduct:
         # With name-anchored search, "mascarpone" doesn't match "queso crema" in
         # Stage 1. Semantic fallback (floor=0.65) may or may not find matches in a
         # tiny 3-product catalog. Any verdict is valid — the key is no crash.
-        assert result["status"] in ("resolved", "needs_suggestion", "needs_clarification", "not_found")
+        assert result["status"] in ("resolved", "needs_suggestion", "not_found")
         assert result["quantity"] == 1
 
 
@@ -880,11 +880,8 @@ class TestHardConstraintFiltering:
         monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
         result = resolve_product("leche La Serenísima 1L", 1, CATALOG)
-        if result["status"] == "resolved":
-            assert result["product"]["brand"] == "La Serenísima"
-        elif result["status"] == "needs_clarification":
-            for opt in result["options"]:
-                assert opt["product"]["brand"] == "La Serenísima"
+        assert result["status"] == "resolved"
+        assert result["product"]["brand"] == "La Serenísima"
 
     def test_qualifier_entera_excludes_descremada(self, monkeypatch):
         """'leche entera' must not return descremada products."""

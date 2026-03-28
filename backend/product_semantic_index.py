@@ -210,14 +210,9 @@ def resolve_product(query: str, quantity: int, catalog: list[dict]) -> dict:
             "quantity": quantity,
         }
 
-    options = build_clarification_candidates(results)
-    if options:
-        return {
-            "status": "needs_clarification",
-            "options": options,
-            "quantity": quantity,
-        }
-
+    # Always auto-pick the top result. The name-anchored pipeline + hard
+    # constraints already ensure results are precise. Clarification is reserved
+    # exclusively for needs_suggestion (OOS/not-found with alternatives).
     return {
         "status": "resolved",
         "product": results[0],
