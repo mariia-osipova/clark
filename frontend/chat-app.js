@@ -227,18 +227,30 @@ function setCart(items) {
   renderCart();
 }
 
-function removeFromCart(productId) {
+async function removeFromCart(productId) {
   state.cart = state.cart.filter(i => i.product_id !== productId);
   saveCart();
   renderCart();
+  // Sync deletion to server so the DB doesn't resurrect the item on next chat turn
+  try {
+    await fetch(`${API}/cart/remove`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ product_id: productId, session_id: state.sessionToken }),
+    });
+  } catch (_) { /* best-effort — local state already updated */ }
 }
 
-function updateCartQty(productId, delta) {
+async function updateCartQty(productId, delta) {
   const item = state.cart.find(i => i.product_id === productId);
   if (!item) return;
   item.quantity += delta;
-  if (item.quantity <= 0) removeFromCart(productId);
-  else { saveCart(); renderCart(); }
+  if (item.quantity <= 0) {
+    await removeFromCart(productId);
+  } else {
+    saveCart();
+    renderCart();
+  }
 }
 
 function renderCart() {
@@ -280,6 +292,7 @@ function renderCart() {
         <button data-action="dec" data-id="${esc(item.product_id)}">−</button>
         <span>${item.quantity}</span>
         <button data-action="inc" data-id="${esc(item.product_id)}">+</button>
+        <button data-action="remove" data-id="${esc(item.product_id)}" class="cart-item__remove" aria-label="Eliminar">✕</button>
       </div>
     `;
     container.insertBefore(el, emptyMsg);
@@ -295,6 +308,7 @@ function bindCartEvents() {
     const id = btn.dataset.id;
     if (btn.dataset.action === 'inc') updateCartQty(id, 1);
     if (btn.dataset.action === 'dec') updateCartQty(id, -1);
+    if (btn.dataset.action === 'remove') removeFromCart(id);
   });
 
   document.getElementById('cart-close').addEventListener('click', () => {

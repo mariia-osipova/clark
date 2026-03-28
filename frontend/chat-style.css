@@ -520,6 +520,16 @@
 .cart-item__qty button:hover { opacity: 0.75; }
 .cart-item__qty button:active { opacity: 0.5; }
 
+.cart-item__remove {
+  margin-left: 4px;
+  font-size: 0.7rem !important;
+  color: #9ca3af !important;
+  background: transparent !important;
+  width: 18px !important;
+  height: 18px !important;
+}
+.cart-item__remove:hover { color: #ef4444 !important; opacity: 1 !important; }
+
 .cart-item__qty span {
   font-family: var(--button-text-font-family);
   font-size: 0.85rem;
