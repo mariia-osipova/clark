@@ -2,6 +2,14 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Nacho — VERSION3: clarification contract + defensive validation + request logging
+
+**Type:** feature
+
+Added `_validate_clarification_response()`: validates pending_request_id and chosen_option_id (type, non-empty, strips whitespace), returns None for any malformed payload. Added `_validate_chat_body()`: normalizes message (string, stripped), filters invalid history items, filters cart items without product_id, validates clarification payload. Added structured request logging via Python `logging` module — chat requests log request_id, message preview, cart size, and clarification flag; errors log with exc_info. Added `_handle_orders_post` body validation (400 on non-list cart). 135 tests passing.
+
+---
+
 ## 2026-03-28 — Juan — VERSION3 started: V2 merged, advancing to clarification popup + offers-aware ranking
 
 **Type:** version

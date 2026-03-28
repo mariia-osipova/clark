@@ -7,12 +7,22 @@ All responses use the envelope:
 """
 
 import json
+import logging
+import sys
 import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
 from backend.db import get_db
+
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
+_log = logging.getLogger("supershop")
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
@@ -91,6 +101,54 @@ def _assemble_chat_context() -> str | None:
     return "\n\n".join(parts) if parts else None
 
 
+def _validate_clarification_response(raw) -> dict | None:
+    """Validate and normalize a clarification_response payload.
+    Returns a clean dict or None if absent/malformed."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        _log.warning("clarification_response is not a dict, ignoring: %r", type(raw).__name__)
+        return None
+    pid = raw.get("pending_request_id")
+    cid = raw.get("chosen_option_id")
+    if not isinstance(pid, str) or not pid.strip():
+        _log.warning("clarification_response missing valid pending_request_id, ignoring")
+        return None
+    if not isinstance(cid, str) or not cid.strip():
+        _log.warning("clarification_response missing valid chosen_option_id, ignoring")
+        return None
+    return {"pending_request_id": pid.strip(), "chosen_option_id": cid.strip()}
+
+
+def _validate_chat_body(body: dict) -> tuple:
+    """Validate and normalize POST /api/v1/chat body.
+    Returns (message, history, cart, clarification_response, error_str|None)."""
+    message = body.get("message", "")
+    if not isinstance(message, str):
+        return "", [], [], None, "message must be a string"
+    message = message.strip()
+
+    history = body.get("history", [])
+    if not isinstance(history, list):
+        _log.warning("history is not a list, discarding")
+        history = []
+    history = [
+        h for h in history
+        if isinstance(h, dict)
+        and isinstance(h.get("role"), str)
+        and isinstance(h.get("content"), str)
+    ]
+
+    cart = body.get("cart", [])
+    if not isinstance(cart, list):
+        _log.warning("cart is not a list, discarding")
+        cart = []
+    cart = [c for c in cart if isinstance(c, dict) and c.get("product_id")]
+
+    clarification_response = _validate_clarification_response(body.get("clarification_response"))
+    return message, history, cart, clarification_response, None
+
+
 def envelope(data=None, error=None, request_id=None):
     return {
         "ok": error is None,
@@ -102,8 +160,7 @@ def envelope(data=None, error=None, request_id=None):
 
 class RequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        # Suppress default access log noise; add structured logging here if needed
-        pass
+        _log.info("%s %s", self.command, self.path)
 
     def send_json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload).encode()
@@ -169,21 +226,31 @@ class RequestHandler(BaseHTTPRequestHandler):
                 products = json.load(f)
             self.send_json(envelope(data={"products": products, "total": len(products)}))
         except Exception as e:
+            _log.error("catalog error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_chat(self, body: dict):
+        req_id = str(uuid.uuid4())
+        message, history, cart, clarification_response, err = _validate_chat_body(body)
+        if err:
+            _log.warning("chat [%s] bad request: %s", req_id, err)
+            self.send_json(envelope(error=err, request_id=req_id), 400)
+            return
         try:
             from backend.chat_agent_agentic import handle_chat
+            _log.info("chat [%s] message=%r clarification=%s", req_id, message[:60], clarification_response is not None)
             result = handle_chat(
-                message=body.get("message", ""),
-                history=body.get("history", []),
-                cart=body.get("cart", []),
-                clarification_response=body.get("clarification_response"),
+                message=message,
+                history=history,
+                cart=cart,
+                clarification_response=clarification_response,
                 context=_assemble_chat_context(),
             )
-            self.send_json(envelope(data=result))
+            _log.info("chat [%s] ok cart_items=%d clarification=%s", req_id, len(result.get("cart") or []), result.get("clarification") is not None)
+            self.send_json(envelope(data=result, request_id=req_id))
         except Exception as e:
-            self.send_json(envelope(error=str(e)), 500)
+            _log.error("chat [%s] error: %s", req_id, e, exc_info=True)
+            self.send_json(envelope(error=str(e), request_id=req_id), 500)
 
     def _handle_auth_register(self, body: dict):
         # TODO (Nacho): implement registration with SQLite
@@ -213,12 +280,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             ]
             self.send_json(envelope(data={"orders": orders}))
         except Exception as e:
+            _log.error("orders GET error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_orders_post(self, body: dict):
+        cart = body.get("cart", [])
+        if not isinstance(cart, list):
+            self.send_json(envelope(error="cart must be a list"), 400)
+            return
         try:
             catalog = _load_catalog()
-            cart = body.get("cart", [])
             validated = _validate_order_cart(cart, catalog)
             total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
             order_id = str(uuid.uuid4())[:8]
@@ -231,8 +302,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 conn.commit()
             finally:
                 conn.close()
+            _log.info("order [%s] placed items=%d total=%.2f", order_id, len(validated), total)
             self.send_json(envelope(data={"order_id": order_id, "total": total}))
         except Exception as e:
+            _log.error("orders POST error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_preferences_get(self):
