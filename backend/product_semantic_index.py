@@ -146,13 +146,13 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _keyword_score(tokens: list[str], product: dict) -> float:
-    searchable = " ".join([
+    searchable = _normalize_text(" ".join([
         product.get("name", ""),
         product.get("brand", ""),
         product.get("category", ""),
         product.get("package_size", ""),
-    ]).lower()
-    return sum(1 for t in tokens if t in searchable)
+    ]))
+    return sum(1 for t in tokens if _normalize_text(t) in searchable)
 
 
 def _product_text(product: dict) -> str:
