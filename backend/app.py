@@ -310,6 +310,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 clarification_response=clarification_response,
                 context=_assemble_chat_context(),
                 session_id=session_id,
+                action=action or None,
             )
             _log.info("chat [%s] ok cart_items=%d clarification=%s", req_id, len(result.get("cart") or []), result.get("clarification") is not None)
             self.send_json(envelope(data=result, request_id=req_id))

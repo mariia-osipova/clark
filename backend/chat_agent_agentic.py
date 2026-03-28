@@ -354,6 +354,7 @@ def handle_chat(
     clarification_response: dict | None = None,
     context: str | None = None,
     session_id: str = "",
+    action: str | None = None,
 ) -> dict[str, Any]:
     """
     Process a chat turn and return:
