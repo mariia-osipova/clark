@@ -9,13 +9,18 @@ You are assisting Jeremias. His focus is the AI agent behavior, prompt strategy,
 
 ## Current version: VERSION3 active
 
-## Current focus
+## Current version: VERSION3 ✅ → VERSION4 upcoming
+
+## Current focus (V3 complete)
 - [x] Tighten clarification generation and continuation logic in `backend/chat_agent_agentic.py`
 - [x] Make ambiguous requests produce structured option sets instead of free-form uncertainty
 - [x] Balance user intent with offer-aware ranking without making overly aggressive substitutions
 
-## Next focus
-- [ ] Prepare monthly planning prompt and recurring-generation logic after clarification flow is stable
+## V4 focus
+- [ ] Swap `search_products` tool for `resolve_product` + `add_to_cart` in the agent graph once Juan and Nacho deliver those tools. Agent calls `resolve_product()` and routes on verdict, never decides product ambiguity itself.
+- [ ] Simplify system prompt to ~4 routing rules: if `resolved` → `add_to_cart`; if `needs_clarification` → `request_clarification`; if `not_found` → report missing.
+- [ ] Add monthly basket graph node: calls `POST /api/v1/recurring-plan/generate`, presents result to user, handles overrides.
+- [ ] Make recurring generation reproducible enough that the team can review and trust the output live.
 
 ## How to help Jeremias
 - When he describes a behavior or prompt change, implement it in `chat_agent_agentic.py`.

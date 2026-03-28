@@ -11,13 +11,19 @@ You are assisting Nacho. His focus is API contracts, backend wiring, SQLite sche
 
 ## Current version: VERSION3 active
 
-## Current focus
-- [ ] Stabilize the clarification request/response contract in the API
-- [ ] Add defensive validation so malformed clarification payloads cannot break the app
-- [ ] Keep logging and request tracing strong enough to debug unclear demo failures
+## Current version: VERSION3 ✅ → VERSION4 upcoming
 
-## Next focus
-- [ ] Prepare the recurring-plan persistence path once the clarification flow is locked in
+## Current focus (V3 complete)
+- [x] Stabilize the clarification request/response contract in the API
+- [x] Add defensive validation so malformed clarification payloads cannot break the app
+- [x] Keep logging and request tracing strong enough to debug unclear demo failures
+
+## V4 focus
+- [ ] `session_carts` SQLite table + `add_to_cart(session_id, product_id, quantity)` / `remove_from_cart` / `get_cart` endpoints — server-side cart state so the agent never tracks or merges the cart list across turns.
+- [ ] `recurring_plans` and `recurring_plan_items` SQLite tables with full CRUD endpoints.
+- [ ] `POST /api/v1/recurring-plan/generate` → calls Juan's `generate_monthly_basket_candidates()`, returns proposed cart.
+- [ ] `POST /api/v1/recurring-plan/accept` → saves proposed basket as a new order.
+- [ ] Own the final integration path from recurring config → generated cart → saved order.
 
 ## How to help Nacho
 - When he asks to add or change an endpoint, update `backend/app.py` and [docs/api.md](../docs/api.md) together.

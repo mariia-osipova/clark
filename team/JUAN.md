@@ -40,9 +40,10 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 - [ ] Expand evals for ambiguous cola, size conflicts, close-brand choices
 
 ### V4 ⬜
-- [ ] Use order history + offers data to rank monthly basket candidates
-- [ ] Bundle-level reasoning so monthly cart is coherent, not item-by-item greedy
-- [ ] Eval cases for monthly restock, budget pressure, and missing essentials
+- [ ] `resolve_product(query, quantity, catalog)` in `product_semantic_index.py`: wraps `search()` → `build_clarification_candidates()` → `find_alternatives()` into a single verdict dict (`resolved` / `needs_clarification` / `not_found`). Eliminates ambiguity judgment and substitute-vs-report decisions from the LLM.
+- [ ] `parse_quantity(message)` utility: regex + Spanish word-number map ("dos" → 2, "3 botellas" → 3, never confuses "1L" size with quantity).
+- [ ] `generate_monthly_basket_candidates(prefs, order_history, catalog, budget)`: rule-based algorithm. Pulls must-haves from preferences, counts frequency across order history, resolves each via `resolve_product()`, fills remaining budget with high-discount items. Returns candidates tagged `must_have` / `recurring` / `offer` / `suggested`. LLM presents — does not compute.
+- [ ] Eval cases for monthly restock, budget pressure, and missing essentials.
 
 ## Version roadmap (Juan)
 | Version | Focus | Status |
@@ -51,7 +52,7 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 | V1 | Product ranking for exact and near-exact matches, filter unavailable items, initial tests | ✅ Done |
 | V2 | Semantic retrieval in `product_semantic_index.py`, rank alternatives, expand eval suite | ✅ Done |
 | V3 | Extend ranking with discount/offer awareness, define clarification candidate sets | 🔜 Active |
-| V4 | Use order history + offers for monthly basket ranking, bundle-level reasoning | ⬜ Upcoming |
+| V4 | `resolve_product`, `parse_quantity`, `generate_monthly_basket_candidates` — deterministic tool layer | ⬜ Upcoming |
 
 ## How to help Juan
 - When he asks to scrape or update the catalog, write output to `data/catalog_snapshot.json` with normalized fields.
