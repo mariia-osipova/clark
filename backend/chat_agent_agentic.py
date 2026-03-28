@@ -110,7 +110,7 @@ def _make_tools(catalog: list[dict]):
     """Return LangChain tool objects closed over the catalog."""
 
     @tool
-    def search_products(query: str, top_k: int = 5) -> str:
+    def search_products(query: str, top_k: int = 50) -> str:
         """Search the product catalog for items matching a natural language query.
         Always call this before set_cart to find the correct product_id and price.
         Returns a ranked list of in-stock products as JSON."""

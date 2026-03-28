@@ -22,20 +22,18 @@ CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
 
 def search(query: str, catalog: list[dict], top_k: int = 10) -> list[dict]:
     """
-    Return up to top_k products matching the query.
-    V0: simple keyword filter on name + brand.
+    Return up to top_k products matching the query, re-ranked by brand/size signals.
+    V0: keyword filter → rank_candidates (brand +5, size +5, discount boost).
     V2: upgrade to semantic retrieval using the index.
     """
     tokens = _tokenize(query)
-    scored = []
+    candidates = []
     for product in catalog:
         if product.get("available_quantity", 1) == 0:
             continue
-        score = _keyword_score(tokens, product)
-        if score > 0:
-            scored.append((score, product))
-    scored.sort(key=lambda x: -x[0])
-    return [p for _, p in scored[:top_k]]
+        if _keyword_score(tokens, product) > 0:
+            candidates.append(product)
+    return rank_candidates(candidates, query)[:top_k]
 
 
 def rank_candidates(candidates: list[dict], query: str) -> list[dict]:
