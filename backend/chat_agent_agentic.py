@@ -707,55 +707,23 @@ def handle_chat(
             qty = 1
             product_label = " ".join(filter(None, [product.get("name", ""), product.get("package_size", "")]))
 
-            _hint = SystemMessage(content=(
-                f"Ya resolviste la ambigüedad: el usuario eligió '{product_label}' "
-                f"(product_id={chosen_id}) y fue agregado al carrito. "
-                "Continuá procesando el pedido original. "
-                "No vuelvas a buscar ese producto. "
-                "Para cualquier producto del pedido original cuyo resolve_product devolvió "
-                "'needs_clarification' en el contexto anterior, debés llamar a "
-                "request_clarification nuevamente con las mismas options — no las listes en texto."
-            ))
-
             if session_id:
-                # Persist choice and invoke graph to continue any remaining items
+                # Persist choice. The checkpointed graph history already has the original
+                # request — the next user turn will continue naturally from that context.
+                # Do NOT re-invoke here with the original message: doing so causes
+                # resolve_product to re-run for the same query and return needs_clarification
+                # again (the structural invariant catches it), creating an infinite loop.
                 _write_session_cart_item(session_id, chosen_id, qty)
-                final_state = app.invoke(
-                    {
-                        "messages": [_hint, HumanMessage(content=product_label)],
-                        "clarification": None,
-                        "missing_items": [],
-                    },
-                    config=config,
-                )
                 return {
-                    "reply": _extract_reply(final_state, product_label),
+                    "reply": f"Listo, agregué {product_label} al carrito.",
                     "cart": _read_session_cart(session_id, catalog),
-                    "clarification": final_state.get("clarification"),
-                    "missing_items": final_state.get("missing_items") or [],
+                    "clarification": None,
+                    "missing_items": [],
                 }
             else:
-                # Stateless: update local cart
+                # Stateless: update local cart and return confirmation.
                 new_cart = _upsert_local_cart_item(initial_cart, chosen_id, qty, catalog)
                 validated_cart, _ = _validate_cart_with_report(new_cart, catalog)
-                pending_msg = str(clarification_response.get("pending_message", "") or "").strip()
-                if pending_msg:
-                    # Multi-item: re-invoke graph to process remaining items
-                    final_state = app.invoke(
-                        {
-                            "messages": [_hint, HumanMessage(content=pending_msg)],
-                            "result_cart": None,
-                            "clarification": None,
-                            "missing_items": [],
-                        },
-                        config=config,
-                    )
-                    return {
-                        "reply": _extract_reply(final_state, product_label),
-                        "cart": _merge_local_carts(validated_cart, final_state.get("result_cart"), catalog),
-                        "clarification": final_state.get("clarification"),
-                        "missing_items": final_state.get("missing_items") or [],
-                    }
                 return {
                     "reply": f"Listo, agregué {product_label} al carrito.",
                     "cart": validated_cart,

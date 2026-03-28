@@ -434,7 +434,8 @@ class TestChatEndpoint:
         assert first["data"]["clarification"] is not None
         assert second["data"]["clarification"] is None
         assert second["data"]["cart"][0]["product_id"] == "p1"
-        assert mock_app.invoke.call_count == 2
+        # Clarification resolution no longer re-invokes the graph (loop fix).
+        assert mock_app.invoke.call_count == 1
 
 
 # ─── Unit: chat context assembly ─────────────────────────────────────────────

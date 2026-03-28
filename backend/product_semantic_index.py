@@ -143,15 +143,17 @@ def rank_candidates(candidates: list[dict], query: str) -> list[dict]:
         score = _keyword_score(tokens, p)
         score += _brand_score(tokens, p)          # +5 for exact brand match
         score += _size_score(query, p)            # +5 for exact package-size match
-        # Tiered discount bonus — makes strong offers visible in ranking
-        discount_pct = p.get("discount_pct", 0)
-        if discount_pct >= 40:
-            score += 4.0    # Strong offer — near brand-match weight
-        elif discount_pct >= 20:
-            score += 2.0    # Meaningful discount
-        elif discount_pct >= 10:
-            score += 1.0    # Mild discount — equal to one keyword match
         if score > 0:
+            # Tiered discount bonus — tiebreaker for already-relevant products only.
+            # Must not fire on products with zero keyword/brand/size match or it
+            # promotes irrelevant items above actual matches.
+            discount_pct = p.get("discount_pct", 0)
+            if discount_pct >= 40:
+                score += 4.0    # Strong offer — near brand-match weight
+            elif discount_pct >= 20:
+                score += 2.0    # Meaningful discount
+            elif discount_pct >= 10:
+                score += 1.0    # Mild discount — equal to one keyword match
             scored.append((score, p))
     scored.sort(key=lambda x: -x[0])
     return [p for _, p in scored]
