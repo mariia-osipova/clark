@@ -2,6 +2,14 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Nacho — VERSION4: session carts + recurring plan persistence + generate/accept flow
+
+**Type:** feature
+
+Added `session_carts`, `recurring_plans`, and `recurring_plan_items` tables to `backend/db.py` and `scripts/migrate_v4_session_carts_and_plans.py`. Implemented `GET/POST /api/v1/cart` and `POST /api/v1/cart/remove` for server-side cart state keyed by session_id. Implemented `GET/POST /api/v1/recurring-plan` for monthly config persistence (upsert on id='default'). Implemented `POST /api/v1/recurring-plan/generate`: loads plan + order history + catalog, calls `generate_monthly_basket_candidates()` from product_semantic_index, falls back to rule-based stub (priority items + frequency-ranked history) if Juan's function is not yet available. Implemented `POST /api/v1/recurring-plan/accept`: validates proposed cart against catalog via `_validate_order_cart()` and saves as a new order. Updated `docs/api.md`. 168 tests passing.
+
+---
+
 ## 2026-03-28 — Jeremias — Permanent rule: no ad hoc agent behavior fixes
 
 **Type:** decision
