@@ -10,19 +10,19 @@ Hardened `chat_agent_agentic.py` and `app.py` after the agent weakness review: c
 
 ---
 
-## 2026-03-27 — Nacho — VERSION2: preferences persistence + chat context assembly
+## 2026-03-27 — Nacho — Preferences persistence + chat context assembly
 
 **Type:** feature
 
-Added `preferences` table to SQLite schema (backend/db.py, scripts/migrate_v2_preferences.py). Implemented `GET /api/v1/preferences` and `PUT /api/v1/preferences` endpoints. Added `_assemble_chat_context()` in app.py: loads last 3 orders and saved preferences from SQLite, builds a context string passed to `handle_chat()` as a `context` kwarg. Added `context` param to `handle_chat()` signature (chat_agent_agentic.py) — injected as a SystemMessage before history. Added V2 integration and unit tests to tests/test_api.py. Updated docs/api.md.
+Added `preferences` table to SQLite schema together with the preferences migration script. Implemented `GET /api/v1/preferences` and `PUT /api/v1/preferences` endpoints. Added `_assemble_chat_context()` in app.py: loads last 3 orders and saved preferences from SQLite, builds a context string passed to `handle_chat()` as a `context` kwarg. Added `context` param to `handle_chat()` signature (chat_agent_agentic.py) — injected as a SystemMessage before history. Added integration and unit tests to tests/test_api.py. Updated docs/api.md.
 
 ---
 
-## 2026-03-27 — Jeremias — VERSION2 agent: query decomposition, substitution, missing tracking
+## 2026-03-27 — Jeremias — Agent query decomposition, substitution, and missing tracking
 
 **Type:** feature
 
-Updated `chat_agent_agentic.py` for V2. System prompt now instructs the agent to decompose recipe/goal prompts into per-ingredient `search_products` calls, apply nearest-match substitution when exact isn't found, and reply with a structured ✅/🔄/❌ summary. Added `report_missing` tool (records unfindable ingredients) and `missing_items: list[str]` to `AgentState` and the `handle_chat()` return dict. `handle_chat()` now returns `{ reply, cart, clarification, missing_items }`. 82 tests passing.
+Updated `chat_agent_agentic.py` to decompose recipe/goal prompts into per-ingredient `search_products` calls, apply nearest-match substitution when exact isn't found, and reply with a structured ✅/🔄/❌ summary. Added `report_missing` tool (records unfindable ingredients) and `missing_items: list[str]` to `AgentState` and the `handle_chat()` return dict. `handle_chat()` now returns `{ reply, cart, clarification, missing_items }`. 82 tests passing.
 
 ---
 
@@ -34,19 +34,19 @@ Replaced the raw OpenAI agentic loop in `chat_agent_agentic.py` with a LangGraph
 
 ---
 
-## 2026-03-27 — Nacho — VERSION1 backend: orders persistence + cart validation
+## 2026-03-27 — Nacho — Orders persistence + cart validation
 
 **Type:** feature
 
-Added `orders` table to SQLite schema (backend/db.py, scripts/migrate_v1_orders.py). Implemented `_validate_order_cart()` in app.py: drops unknown/out-of-stock items, enforces catalog prices over client-supplied values. `POST /api/v1/orders` now validates cart and persists to SQLite. `GET /api/v1/orders` reads order history from SQLite. Added tests/test_api.py (envelope, cart validation, total computation, catalog and orders integration tests). Updated .gitignore.
+Added `orders` table to SQLite schema together with the orders migration script. Implemented `_validate_order_cart()` in app.py: drops unknown/out-of-stock items, enforces catalog prices over client-supplied values. `POST /api/v1/orders` now validates cart and persists to SQLite. `GET /api/v1/orders` reads order history from SQLite. Added tests/test_api.py (envelope, cart validation, total computation, catalog and orders integration tests). Updated .gitignore.
 
 ---
 
-## 2026-03-27 — Jeremias — VERSION0 unite gate passed, starting VERSION1
+## 2026-03-27 — Jeremias — Initial unite gate passed, moving to cart mutation work
 
 **Type:** version
 
-Merged jere, Juan, and nacho branches into main. All 26 tests pass. VERSION0 unite gate confirmed: catalog endpoint returns 50 normalized products, frontend shell renders, chat endpoint responds. Pre-commit hook installed — pytest must pass before every commit. CLAUDE.md updated to VERSION1 target.
+Merged jere, Juan, and nacho branches into main. All 26 tests pass. Unite gate confirmed: catalog endpoint returns 50 normalized products, frontend shell renders, chat endpoint responds. Pre-commit hook installed — pytest must pass before every commit. CLAUDE.md updated to the next target.
 
 ---
 
@@ -54,15 +54,15 @@ Merged jere, Juan, and nacho branches into main. All 26 tests pass. VERSION0 uni
 
 **Type:** schema
 
-Created `backend/db.py` with `init_db()` and `get_db()`. Tables: `users` (id, username, email, password_hash, created_at) and `sessions` (id, user_id FK, token, created_at, expires_at). `init_db()` called on server startup in `server.py`. Auth endpoints remain stubbed (V1). `get_db` imported in `app.py` for use in V1 handlers.
+Created `backend/db.py` with `init_db()` and `get_db()`. Tables: `users` (id, username, email, password_hash, created_at) and `sessions` (id, user_id FK, token, created_at, expires_at). `init_db()` called on server startup in `server.py`. Auth endpoints remain stubbed. `get_db` imported in `app.py` for use in later handlers.
 
 ---
 
-## 2026-03-27 — Juan — V1 product ranking: brand/size matching and unit normalisation
+## 2026-03-27 — Juan — Product ranking: brand/size matching and unit normalisation
 
 **Type:** decision
 
-Enhanced `rank_candidates()` in `backend/product_semantic_index.py` with three new scoring signals: exact brand match (+5, accent-insensitive via `_normalize_text`), exact package-size match (+5, unit-normalised via `_normalize_size` so "1L" == "1000ml" == "1 litro"), and OOS filter (mirrors the one already in `search()`). Created `tests/test_product_ranking.py` with 15 unit tests covering helpers and both public functions. V1 eval scenarios in `llm_eval_harness.py` annotated — `expected_product_ids` to be filled after first real scrape.
+Enhanced `rank_candidates()` in `backend/product_semantic_index.py` with three new scoring signals: exact brand match (+5, accent-insensitive via `_normalize_text`), exact package-size match (+5, unit-normalised via `_normalize_size` so "1L" == "1000ml" == "1 litro"), and OOS filter (mirrors the one already in `search()`). Created `tests/test_product_ranking.py` with 15 unit tests covering helpers and both public functions. Eval scenarios in `llm_eval_harness.py` annotated — `expected_product_ids` to be filled after first real scrape.
 
 ---
 
@@ -78,4 +78,4 @@ Created `scripts/scrape_catalog.py`: paginates Carrefour Argentina VTEX API, nor
 
 **Type:** version
 
-Created VERSION0 repo skeleton: CLAUDE.md, team files (JEREMIAS.md, JUAN.md, MARIIA.md, NACHO.md), docs/, frontend stubs, backend stubs, data/, scripts/, requirements.txt, .env.example. App renamed to supershop. Ready for team to start parallel work on VERSION0 tasks.
+Created the initial repo skeleton: CLAUDE.md, team files (JEREMIAS.md, JUAN.md, MARIIA.md, NACHO.md), docs/, frontend stubs, backend stubs, data/, scripts/, requirements.txt, .env.example. App renamed to supershop. Ready for parallel work.

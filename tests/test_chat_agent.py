@@ -1,5 +1,5 @@
 """
-Tests for Jeremias's V0 agent tasks:
+Tests for Jeremias's chat agent tasks:
   - Chat backend wraps the OpenAI API
   - Prompt style and reply tone are defined
   - Catalog context is injected into the system prompt

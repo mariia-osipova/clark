@@ -28,12 +28,12 @@ _INDEX_CACHE: dict = {}   # key "entries" → list[{id, embedding}], "path_mtime
 def search(query: str, catalog: list[dict], top_k: int = 10) -> list[dict]:
     """
     Return up to top_k products matching the query, re-ranked by brand/size signals.
-    V2: semantic retrieval → rank_candidates (brand +5, size +5, discount boost).
+    Uses semantic retrieval before rank_candidates (brand +5, size +5, discount boost).
     Falls back to keyword filter if the semantic index is not available.
     """
     candidates = _semantic_candidates(query, catalog, top_k * 3)
     if not candidates:
-        # Fallback: keyword filter (V0 behaviour, works without an index)
+        # Fallback: keyword filter that works without a semantic index
         tokens = _tokenize(query)
         candidates = [
             p for p in catalog
@@ -104,7 +104,7 @@ def build_index(catalog: list[dict]) -> None:
       - 384-dimensional embeddings
       - Downloaded automatically from HuggingFace on first run (~450 MB)
 
-    V2: swap search() to load this index and rank by cosine similarity.
+    search() loads this index and re-ranks by cosine similarity.
     """
     try:
         from sentence_transformers import SentenceTransformer
@@ -130,7 +130,7 @@ def build_index(catalog: list[dict]) -> None:
     ]
 
     index = {
-        "version": "v0",
+        "version": "current",
         "model": model_name,
         "entries": entries,
     }
@@ -305,5 +305,4 @@ def _size_score(query: str, product: dict) -> float:
     if query_size and product_size and query_size == product_size:
         return 5.0
     return 0.0
-
 

@@ -1,8 +1,8 @@
 # supershop — Hackathon Repo
 
 ## Project
-AI-powered shopping assistant. See [plan.md](plan.md) for full version roadmap.
-Current target: **VERSION3** — clarification popup plus offers-aware cart reasoning.
+AI-powered shopping assistant. See [plan.md](plan.md) for the current execution plan.
+Current target: clarification popup plus offers-aware cart reasoning.
 
 ## Team identity
 When a team member introduces themselves, read their file immediately before doing anything else:

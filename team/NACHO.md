@@ -9,21 +9,13 @@ You are assisting Nacho. His focus is API contracts, backend wiring, SQLite sche
 - `requirements.txt`
 - `.env.example`
 
-## Current version: VERSION0 tasks
-- [ ] Wire the Python server with env loading and API envelopes
-- [ ] Create minimum SQLite schema: users, sessions (that later versions will extend)
-- [ ] Expose `GET /api/v1/catalog` serving the normalized catalog snapshot
-- [ ] Expose `POST /api/v1/chat` accepting history and returning assistant text
-- [ ] Keep local boot simple: `python backend/server.py` should start the demo
+## Current focus
+- [ ] Stabilize the clarification request/response contract in the API
+- [ ] Add defensive validation so malformed clarification payloads cannot break the app
+- [ ] Keep logging and request tracing strong enough to debug unclear demo failures
 
-## Version roadmap (Nacho)
-| Version | Focus |
-|---|---|
-| V0 | Server wiring, env loading, API envelopes, minimum SQLite foundation, catalog + chat endpoints |
-| V1 | Stabilize cart payload and API validation, keep totals consistent, cart-critical server tests |
-| V2 | Persist preferences and order history in SQLite, stable chat context assembly |
-| V3 | Stabilize clarification request/response contract, defensive validation, logging/request tracing |
-| V4 | SQLite tables for recurring plans and plan items, config persistence, generation-to-order path |
+## Next focus
+- [ ] Prepare the recurring-plan persistence path once the clarification flow is locked in
 
 ## How to help Nacho
 - When he asks to add or change an endpoint, update `backend/app.py` and [docs/api.md](../docs/api.md) together.

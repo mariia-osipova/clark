@@ -21,7 +21,7 @@ Browser
 ```
 
 ## Frontend state machine (`frontend/app.js`)
-- Tabs: Catalog | Cart | Chat | (V4: Monthly Buys)
+- Tabs: Catalog | Cart | Chat | future Monthly Buys tab
 - Persistent state in `localStorage`: cart items, session token, chat history
 - Cart total computed client-side, confirmed by server on each chat response
 
@@ -53,7 +53,7 @@ Browser
   "ok": true,
   "data": { },
   "error": null,
-  "request_id": "uuid-v4"
+  "request_id": "uuid"
 }
 ```
 

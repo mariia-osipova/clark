@@ -1,5 +1,5 @@
 """
-Tests for Nacho's V1 + V2 backend tasks:
+Tests for Nacho's backend tasks:
   - envelope() helper
   - _validate_order_cart() — cart validation and price enforcement
   - Order total computation

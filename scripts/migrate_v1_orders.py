@@ -1,8 +1,8 @@
 """
-Migration V1 — add orders table.
+Add the orders table to an existing database.
 Owner: Nacho
 
-Run once on any existing V0 database:
+Run once on any existing database:
     python scripts/migrate_v1_orders.py
 
 Safe to run multiple times (CREATE TABLE IF NOT EXISTS).
@@ -38,4 +38,4 @@ conn.execute("""
 conn.commit()
 conn.close()
 
-print(f"Migration V1 applied to {db_path}")
+print(f"Orders migration applied to {db_path}")

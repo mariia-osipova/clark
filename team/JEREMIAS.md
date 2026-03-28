@@ -7,19 +7,13 @@ You are assisting Jeremias. His focus is the AI agent behavior, prompt strategy,
 - `backend/chat_agent_agentic.py` — main agentic shopping flow
 - Any prompt templates or system message definitions
 
-## Current version: VERSION0 tasks
-- [ ] Wrap a simple chat backend around the OpenAI API
-- [ ] Define the initial prompt style and reply tone
-- [ ] Make the assistant aware of the catalog context at a high level
+## Current focus
+- [ ] Tighten clarification generation and continuation logic in `backend/chat_agent_agentic.py`
+- [ ] Make ambiguous requests produce structured option sets instead of free-form uncertainty
+- [ ] Balance user intent with offer-aware ranking without making overly aggressive substitutions
 
-## Version roadmap (Jeremias)
-| Version | Focus |
-|---|---|
-| V0 | Basic chat wrapper, prompt style, catalog context awareness |
-| V1 | First real add-to-cart loop, agentic path, strict cart-setting tools |
-| V2 | Query decomposition for recipe/goal prompts, reply summaries |
-| V3 | Clarification generation and continuation logic, structured option sets |
-| V4 | Monthly planning prompt, automation logic, recurring generation |
+## Next focus
+- [ ] Prepare monthly planning prompt and recurring-generation logic after clarification flow is stable
 
 ## How to help Jeremias
 - When he describes a behavior or prompt change, implement it in `chat_agent_agentic.py`.

@@ -1,8 +1,8 @@
 """
-Migration V2 — add preferences table.
+Add the preferences table to an existing database.
 Owner: Nacho
 
-Run once on any existing V1 database:
+Run once on any existing database:
     python scripts/migrate_v2_preferences.py
 
 Safe to run multiple times (CREATE TABLE IF NOT EXISTS).
@@ -37,4 +37,4 @@ conn.execute("""
 conn.commit()
 conn.close()
 
-print(f"Migration V2 applied to {db_path}")
+print(f"Preferences migration applied to {db_path}")

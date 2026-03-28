@@ -35,68 +35,62 @@ class EvalResult:
 # ─── Scenario registry ───────────────────────────────────────────────────────
 
 SCENARIOS: list[Scenario] = [
-    # V0 — basic chat
     Scenario(
-        id="v0_basic_response",
+        id="basic_response",
         description="Assistant responds coherently to a greeting",
         user_message="Hola, ¿qué podés hacer?",
-        tags=["v0", "basic"],
+        tags=["basic"],
     ),
 
-    # V1 — exact product match
     # NOTE: expected_product_ids are intentionally empty here.
     # Fill them in after running scripts/scrape_catalog.py and identifying
     # the real product IDs for "leche entera 1L" and "yogur" in the live catalog.
     Scenario(
-        id="v1_exact_product",
+        id="exact_product",
         description="User asks for leche entera 1L → cart has one matching item",
         user_message="quiero leche entera 1L",
-        tags=["v1", "cart"],
+        tags=["cart"],
     ),
     Scenario(
-        id="v1_quantity",
+        id="quantity_request",
         description="User asks for 2 yogures → cart has quantity 2",
         user_message="agrega 2 yogures",
-        tags=["v1", "cart", "quantity"],
+        tags=["cart", "quantity"],
     ),
 
-    # V2 — recipe decomposition
     Scenario(
-        id="v2_recipe_torta",
+        id="recipe_torta",
         description="Recipe request adds several relevant items",
         user_message="quiero hacer una torta",
-        tags=["v2", "recipe"],
+        tags=["recipe", "llm_judge"],
     ),
     Scenario(
-        id="v2_out_of_stock",
+        id="out_of_stock",
         description="Out-of-stock product is substituted or explicitly noted",
         user_message="quiero leche descremada marca X",
-        tags=["v2", "stock"],
+        tags=["stock", "llm_judge"],
     ),
 
-    # V2 — broad query (semantic search required)
     Scenario(
-        id="v2_broad_query",
+        id="broad_query",
         description="Broad intent adds at least one relevant item",
         user_message="necesito algo para el desayuno",
-        tags=["v2", "broad"],
+        tags=["broad", "llm_judge"],
     ),
 
-    # V2 — out-of-stock substitution (reply must mention the situation)
     Scenario(
-        id="v2_out_of_stock_substitution",
+        id="out_of_stock_substitution",
         description="OOS product is substituted or explicitly mentioned as missing",
         user_message="quiero leche descremada marca inexistente",
-        tags=["v2", "stock"],
+        tags=["stock", "llm_judge"],
     ),
 
-    # V3 — clarification
     Scenario(
-        id="v3_ambiguous_cola",
+        id="ambiguous_cola",
         description="Ambiguous cola request triggers clarification modal",
         user_message="gaseosa cola 1.5L",
         expect_clarification=True,
-        tags=["v3", "clarification"],
+        tags=["clarification"],
     ),
 ]
 
@@ -113,7 +107,7 @@ def judge_response(
     """
     Evaluate a chat response against a scenario.
     Rule-based checks run first for all scenarios.
-    V2-tagged scenarios also run an LLM judge when openai_client is provided.
+    Scenarios tagged with `llm_judge` also run an LLM judge when openai_client is provided.
     """
     cart = cart or []
 
@@ -134,8 +128,8 @@ def judge_response(
         if missing:
             return EvalResult(scenario.id, False, f"Missing products in cart: {missing}", reply, cart)
 
-    # V2: LLM semantic judge
-    if "v2" in scenario.tags and openai_client:
+    # Additional semantic/content review for richer shopping scenarios
+    if "llm_judge" in scenario.tags and openai_client:
         return _llm_judge(scenario, reply, cart, openai_client)
 
     return EvalResult(scenario.id, True, "Passed rule-based checks", reply, cart)

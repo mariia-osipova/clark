@@ -66,7 +66,7 @@ Send a chat message. Returns assistant reply, authoritative cart state, clarific
 }
 ```
 
-**Cart item shape (V1+):**
+**Cart item shape:**
 ```json
 {
   "product_id": "string",
@@ -79,7 +79,7 @@ Send a chat message. Returns assistant reply, authoritative cart state, clarific
 }
 ```
 
-**Clarification response (V3+):** when `ok` is true but `data.clarification` is present, the UI should show the clarification modal instead of updating the cart:
+**Clarification response:** when `ok` is true but `data.clarification` is present, the UI should show the clarification modal instead of updating the cart:
 ```json
 {
   "reply": "string",
@@ -154,7 +154,7 @@ Save or replace user preferences.
 
 ---
 
-## POST /api/v1/monthly-plan (V4)
+## POST /api/v1/monthly-plan (planned)
 
 Save or update recurring monthly shopping configuration.
 
@@ -171,7 +171,7 @@ Save or update recurring monthly shopping configuration.
 }
 ```
 
-## POST /api/v1/monthly-plan/generate (V4)
+## POST /api/v1/monthly-plan/generate (planned)
 
 Trigger monthly cart generation from saved config + order history + current catalog.
 

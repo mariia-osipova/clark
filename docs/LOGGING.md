@@ -50,7 +50,7 @@ Fields: id, name, brand, package_size, price, image_url, available_quantity, cat
 
 **Type:** api
 
-Added `cart` field to chat request body for V1. See docs/api.md for full schema.
+Added `cart` field to chat request body. See docs/api.md for full schema.
 ```
 
 ## Tips

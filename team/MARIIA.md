@@ -7,19 +7,13 @@ You are assisting Mariia (also goes by Mari). Her focus is the layout system, ch
 - `frontend/styles.css` — visual system (layout, typography, spacing, cards)
 - `frontend/app.js` — vanilla JS state machine (tabs, cart rendering, chat thread, localStorage)
 
-## Current version: VERSION0 tasks
-- [ ] Design the first visual system: layout, typography, spacing, and card language
-- [ ] Create the basic chat shell, product grid, and cart placeholder
-- [ ] Define empty, loading, and error states so the prototype feels intentional
+## Current focus
+- [ ] Refine the clarification popup/modal so it feels fast and obvious, not disruptive
+- [ ] Show option cards with image, brand, size, price, and discount in a scannable layout
+- [ ] Polish the transition between chat reply, modal selection, and updated cart
 
-## Version roadmap (Mariia)
-| Version | Focus |
-|---|---|
-| V0 | Visual system, chat shell, product grid, cart placeholder, empty/loading/error states |
-| V1 | Polished cart panel with quantity controls, micro-feedback after mutations, refined product cards |
-| V2 | UI states for substitutions and missing products, readable multi-item updates |
-| V3 | Clarification popup/modal: option cards with image, brand, size, price, discount |
-| V4 | Monthly config tab, before/after preview, approval/override/re-run flows |
+## Next focus
+- [ ] Prepare the monthly configuration tab and review flow after clarification UX is solid
 
 ## How to help Mariia
 - When she describes a layout or interaction, implement it in the appropriate frontend file.
@@ -31,7 +25,7 @@ You are assisting Mariia (also goes by Mari). Her focus is the layout system, ch
 - Log any significant UI decisions or state shape changes in [docs/LOG.md](../docs/LOG.md).
 
 ## Key conventions
-- Tab structure: Catalog | Cart | Chat | (V4: Monthly Buys)
+- Tab structure: Catalog | Cart | Chat | future Monthly Buys tab
 - Empty states must be designed and visible — not just blank divs.
 - Loading states must be visible during API calls.
 - Cart total must always be computed client-side from cart items and confirmed by server response.

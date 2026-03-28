@@ -9,20 +9,13 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 - `data/catalog_snapshot.json` — normalized catalog source
 - `data/product_semantic_index.json` — semantic index
 
-## Current version: VERSION0 tasks
-- [ ] Implement the scraper/normalizer for catalog items (Carrefour public catalog)
-- [ ] Standardize product fields: ID, name, brand, package size, price, image URL, available quantity
-- [ ] Add a first-pass query filter by product name/brand
-- [ ] Write output to `data/catalog_snapshot.json`
+## Current focus
+- [ ] Extend ranking with discount and offer awareness
+- [ ] Define the candidate set used for clarification prompts
+- [ ] Expand eval coverage for ambiguous cola, size conflicts, and close-brand choices
 
-## Version roadmap (Juan)
-| Version | Focus |
-|---|---|
-| V0 | Scraper, normalization, first-pass query filter |
-| V1 | Product ranking for exact and near-exact matches, filter unavailable items, initial tests |
-| V2 | Semantic retrieval in `product_semantic_index.py`, rank alternatives, expand eval suite |
-| V3 | Extend ranking with discount/offer awareness, define clarification candidate sets |
-| V4 | Use order history + offers for monthly basket ranking, bundle-level reasoning |
+## Next focus
+- [ ] Use order history and offers data for monthly basket ranking once the clarification flow is stable
 
 ## How to help Juan
 - When he asks to scrape or update the catalog, write output to `data/catalog_snapshot.json` with normalized fields.

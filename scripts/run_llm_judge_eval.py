@@ -3,7 +3,7 @@ Run the LLM judge eval suite.
 Owner: Juan
 
 Usage:
-    python scripts/run_llm_judge_eval.py [--tags v1,v2] [--scenario-id v1_exact_product] [--no-llm-judge]
+    python scripts/run_llm_judge_eval.py [--tags cart,recipe] [--scenario-id exact_product] [--no-llm-judge]
 
 Outputs a summary table and exits with code 1 if any scenario fails.
 """
@@ -53,7 +53,7 @@ def run_scenarios(scenarios, verbose=False, openai_client=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tags", help="Comma-separated tag filter, e.g. v1,cart")
+    parser.add_argument("--tags", help="Comma-separated tag filter, e.g. cart,recipe")
     parser.add_argument("--scenario-id", help="Run a single scenario by ID")
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument("--no-llm-judge", action="store_true", help="Skip LLM judge calls (CI-safe)")
