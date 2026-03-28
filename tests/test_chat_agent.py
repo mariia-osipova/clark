@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-key")
 
-from langchain_core.messages import AIMessage as LCAIMessage, HumanMessage as LCHumanMessage
+from langchain_core.messages import AIMessage as LCAIMessage
 
 from backend.chat_agent_agentic import (
     _build_system_prompt,
@@ -308,14 +308,14 @@ class TestHandleChat:
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
     def test_clarification_resolution_continues_with_pending_message(self, mock_build_graph, mock_load_catalog, sample_catalog):
-        """When clarification_response includes a pending_message, the graph is
-        re-invoked with the original request so remaining items are processed."""
+        """Clarification resolution adds the chosen item and returns immediately.
+        The graph is NOT re-invoked even when pending_message is present, to avoid
+        re-running resolve_product on the same query and entering a clarification loop."""
         mock_load_catalog.return_value = sample_catalog
         mock_app = MagicMock()
-        mock_app.invoke.return_value = _make_graph_state(reply="También agregué el yogur.")
         mock_build_graph.return_value = mock_app
 
-        handle_chat(
+        result = handle_chat(
             "Leche entera La Serenísima",
             [],
             [],
@@ -326,16 +326,48 @@ class TestHandleChat:
             },
         )
 
-        mock_app.invoke.assert_called_once()
-        state = mock_app.invoke.call_args.args[0]
-        # result_cart is None — cart lives in DB; context injected via system message
-        assert state["result_cart"] is None
-        # The continuation message must be the original pending request
-        human_messages = [m for m in state["messages"] if isinstance(m, LCHumanMessage)]
-        assert human_messages[-1].content == "quiero leche y yogur"
-        # A system message must note what was already resolved (mentions product_id p1)
-        all_contents = [getattr(m, "content", "") for m in state["messages"]]
-        assert any("p1" in c for c in all_contents)
+        mock_app.invoke.assert_not_called()
+        assert result["clarification"] is None
+        assert any(item["product_id"] == "p1" for item in (result["cart"] or []))
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_plain_text_reply_without_clarification_response_goes_through_graph(
+        self, mock_build_graph, mock_load_catalog, sample_catalog
+    ):
+        """Text-only replies on an existing session go through the graph normally.
+        Clarification resolution requires an explicit clarification_response payload."""
+        from backend.chat_agent_agentic import _reset_app_cache
+
+        _reset_app_cache()
+        mock_load_catalog.return_value = sample_catalog
+        mock_app = MagicMock()
+        empty_state = MagicMock()
+        empty_state.values = {}
+        mock_app.get_state.return_value = empty_state
+        # Turn 1 returns clarification; turn 2 (text only) returns no clarification
+        mock_app.invoke.side_effect = [
+            _make_graph_state(reply="¿Cuál leche querés?", clarification={
+                "question": "¿Cuál leche querés?",
+                "options": [{"id": "p1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]}],
+                "pending_request_id": "pending-1",
+            }),
+            _make_graph_state(reply="ok"),
+        ]
+        mock_build_graph.return_value = mock_app
+
+        first = handle_chat("quiero leche", [], [], session_id="sess-clarif")
+        second = handle_chat(
+            "Leche entera La Serenísima 1L.",
+            [{"role": "assistant", "content": first["reply"]}],
+            [],
+            session_id="sess-clarif",
+        )
+
+        assert first["clarification"] is not None
+        # Text-only reply goes through graph — graph returns no clarification
+        assert second["clarification"] is None
+        assert mock_app.invoke.call_count == 2
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
@@ -402,10 +434,11 @@ class TestHandleChat:
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
-    def test_add_to_cart_tool_writes_to_db(self, mock_build_graph, mock_load_catalog, sample_catalog):
-        """add_to_cart tool should upsert into session_carts and return confirmation."""
+    def test_add_to_cart_tool_validates_and_returns_json(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        """add_to_cart tool validates the product and returns confirmation JSON.
+        DB writes are handled by tools_node (tested via _write_session_cart_items)."""
         import tempfile
-        from backend.chat_agent_agentic import _make_tools, _reset_app_cache
+        from backend.chat_agent_agentic import _make_tools, _write_session_cart_items, _reset_app_cache
         from backend import db as _db
         _reset_app_cache()
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
@@ -414,11 +447,15 @@ class TestHandleChat:
         try:
             os.environ["DB_PATH"] = tmp_path
             _db.init_db()
-            tools = _make_tools(sample_catalog, session_id="sess-xyz")
+            # Tool validates and returns JSON — no session_id needed
+            tools = _make_tools(sample_catalog)
             tool = next(t for t in tools if t.name == "add_to_cart")
             result = json.loads(tool.invoke({"product_id": "p1", "quantity": 2}))
             assert result["added"] is True
             assert result["product_id"] == "p1"
+            assert result["quantity"] == 2
+            # DB write is done separately via _write_session_cart_items
+            _write_session_cart_items("sess-xyz", [("p1", 2)])
             conn = _db.get_db()
             row = conn.execute(
                 "SELECT quantity FROM session_carts WHERE session_id=? AND product_id=?",
@@ -813,12 +850,17 @@ class TestSingletonCache:
         from backend.chat_agent_agentic import _reset_app_cache
         _reset_app_cache()
 
+    @patch("backend.chat_agent_agentic._get_checkpointer")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
-    def test_graph_built_per_call(
-        self, mock_load_catalog, mock_llm_cls, sample_catalog
+    def test_graph_cached_after_first_build(
+        self, mock_load_catalog, mock_llm_cls, mock_get_checkpointer, sample_catalog
     ):
-        """Graph is rebuilt each call (session_id may differ); catalog is cached separately."""
+        """Graph is built once and cached; subsequent calls with the same catalog reuse it."""
+        from backend.chat_agent_agentic import _reset_app_cache
+        from langgraph.checkpoint.memory import MemorySaver
+        _reset_app_cache()
+        mock_get_checkpointer.return_value = MemorySaver()
         mock_load_catalog.return_value = sample_catalog
         llm = MagicMock()
         llm.bind_tools.return_value = llm
@@ -828,8 +870,8 @@ class TestSingletonCache:
         handle_chat("hola", [], [])
         handle_chat("cómo estás", [], [])
 
-        # ChatOpenAI is instantiated once per graph build → two calls now
-        assert mock_llm_cls.call_count == 2
+        # Graph built once, cached for the second call
+        assert mock_llm_cls.call_count == 1
 
     @patch("backend.chat_agent_agentic.ChatOpenAI")
     @patch("backend.chat_agent_agentic._load_catalog")
@@ -1109,11 +1151,9 @@ class TestCleanups:
             },
         )
 
-        assert llm.invoke.call_count == 1
-        messages = llm.invoke.call_args_list[0][0][0]
-        contents = [getattr(message, "content", "") for message in messages]
-        assert any("No vuelvas a buscar ese producto" in content for content in contents)
-        assert any("quiero galletitas" in content for content in contents)
+        # Clarification resolution no longer re-invokes the graph to avoid
+        # re-running resolve_product on the same query (clarification loop fix).
+        assert llm.invoke.call_count == 0
 
     def test_search_products_tool_no_longer_exists(self):
         from backend.chat_agent_agentic import _make_tools

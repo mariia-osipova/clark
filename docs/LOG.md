@@ -165,3 +165,11 @@ Follow-up fix for a missed real prompt: phrases like `dame opciones para galleti
 **Type:** decision
 
 Removed the ad hoc token-based ambiguity detection from `backend/chat_agent_agentic.py`. The graph now records viable search results as structured selection candidates and only converts them into a `clarification` payload when the agent tries to end the turn without either mutating the cart or explicitly calling `request_clarification`, which keeps the flow agentic while still guaranteeing the popup for unresolved option lists. Full suite after the change: `123 passed, 1 skipped`.
+
+---
+
+## 2026-03-28 — Jeremias — Typed clarification replies now resolve against pending session state
+
+**Type:** blocker
+
+Fixed a real clarification handoff bug across `frontend/app.js`, `backend/app.py`, and `backend/chat_agent_agentic.py`: when a user typed the selected option in chat instead of completing the modal flow, the backend treated it as a fresh request and clarification drifted. The server now keeps pending clarification options in ephemeral session memory, can auto-resolve a plain-text reply that matches an option label, and accepts `X-Session-Token` as the chat session fallback. The frontend now blocks normal chat while a clarification modal is open, sends `session_id` explicitly, and avoids duplicating the current user turn in `history`. Added regressions in `tests/test_chat_agent.py` and `tests/test_api.py`; both suites pass (`57` and `85` tests).

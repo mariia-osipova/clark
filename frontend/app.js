@@ -113,6 +113,13 @@ function removeFromCart(productId) {
   state.cart = state.cart.filter(i => i.product_id !== productId);
   saveCart();
   renderCart();
+  if (state.sessionToken) {
+    fetch(`${API}/cart/remove`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ session_id: state.sessionToken, product_id: productId }),
+    }).catch(err => console.warn('cart remove sync failed', err));
+  }
 }
 
 function updateCartQty(productId, delta) {
@@ -231,6 +238,19 @@ async function sendChat() {
   const input = document.getElementById('chat-input');
   const message = input.value.trim();
   if (!message) return;
+  if (state.clarification) {
+    const modal = document.getElementById('clarification-modal');
+    const errorEl = document.getElementById('modal-error');
+    modal.classList.remove('hidden');
+    errorEl.textContent = 'Elegí una de las opciones para continuar.';
+    errorEl.classList.remove('hidden');
+    document.getElementById('modal-options')
+      .querySelector('input[name="clarification-option"]:checked, input[name="clarification-option"]')
+      ?.focus();
+    return;
+  }
+
+  const requestHistory = state.chatHistory.slice(-20);
 
   input.value = '';
   document.getElementById('chat-empty').classList.add('hidden');
@@ -238,16 +258,15 @@ async function sendChat() {
 
   const loadingEl = appendChatMsg('loading', 'Escribiendo...');
 
-  state.chatHistory.push({ role: 'user', content: message });
-
   try {
     const res = await fetch(`${API}/chat`, {
       method: 'POST',
       headers: jsonHeaders(),
       body: JSON.stringify({
         message,
-        history: state.chatHistory.slice(-20),
+        history: requestHistory,
         cart: state.cart,
+        session_id: state.sessionToken,
       }),
     });
     const json = await res.json();
@@ -257,6 +276,7 @@ async function sendChat() {
 
     const { reply, cart, clarification } = json.data;
 
+    state.chatHistory.push({ role: 'user', content: message });
     state.chatHistory.push({ role: 'assistant', content: reply });
     appendChatMsg('assistant', reply);
 
@@ -343,6 +363,7 @@ async function resolveClarification() {
         message: selectedOption?.label || '__clarification__',
         history: state.chatHistory.slice(-20),
         cart: state.cart,
+        session_id: state.sessionToken,
         clarification_response: {
           pending_request_id: state.clarification.pending_request_id,
           chosen_option_id: state.clarification.selectedOptionId,

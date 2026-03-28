@@ -118,7 +118,7 @@ def _generate_basket_stub(plan: dict, order_history: list, catalog: list) -> lis
 
     freq: dict = {}
     for order in order_history:
-        for item in order.get("items", []):
+        for item in order:
             pid = item.get("product_id")
             if pid:
                 freq[pid] = freq.get(pid, 0) + item.get("quantity", 1)
@@ -298,7 +298,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             _log.warning("chat [%s] bad request: %s", req_id, err)
             self.send_json(envelope(error=err, request_id=req_id), 400)
             return
-        session_id = str(body.get("session_id", "") or "")
+        session_id = str(body.get("session_id", "") or self.headers.get("X-Session-Token", "") or "")
         action = str(body.get("action", "") or "")
         try:
             from backend.chat_agent_agentic import handle_chat
@@ -608,7 +608,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     items = json.loads(r["cart_json"])
                 except Exception:
                     items = []
-                order_history.append({"items": items, "total": r["total"], "created_at": r["created_at"]})
+                order_history.append(items if isinstance(items, list) else [])
 
             catalog = _load_catalog()
 

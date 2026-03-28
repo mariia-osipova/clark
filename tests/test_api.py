@@ -384,6 +384,59 @@ class TestChatEndpoint:
         assert first["data"]["clarification"]["pending_request_id"] == "pending-1"
         assert second["data"]["cart"][0]["product_id"] == "p1"
 
+    def test_typed_clarification_reply_uses_session_header(self, test_server, sample_catalog):
+        from backend.chat_agent_agentic import _reset_app_cache
+
+        _reset_app_cache()
+        clarification = {
+            "question": "¿Cuál leche querés?",
+            "options": [
+                {"id": "p1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]},
+                {"id": "p2", "label": "Yogur frutilla Danone 200g", "product": sample_catalog[1]},
+            ],
+            "pending_request_id": "pending-1",
+        }
+        mock_app = MagicMock()
+        # Turn 1: new session (empty state), returns clarification
+        # Turn 2: continuation after user picks an option, returns no clarification
+        empty_state = MagicMock()
+        empty_state.values = {}
+        mock_app.get_state.return_value = empty_state
+        mock_app.invoke.side_effect = [
+            _graph_state(reply="¿Cuál leche querés?", clarification=clarification),
+            _graph_state(reply="Listo, agregué Leche entera La Serenísima 1L al carrito."),
+        ]
+
+        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), patch(
+            "backend.chat_agent_agentic._build_graph", return_value=mock_app
+        ):
+            first, status1 = _post(
+                f"{test_server}/api/v1/chat",
+                {"message": "quiero leche", "history": [], "cart": []},
+                headers={"X-Session-Token": "sess-header"},
+            )
+            second, status2 = _post(
+                f"{test_server}/api/v1/chat",
+                {
+                    "message": "Leche entera La Serenísima 1L.",
+                    "history": [{"role": "assistant", "content": first["data"]["reply"]}],
+                    "cart": [],
+                    "clarification_response": {
+                        "pending_request_id": "pending-1",
+                        "chosen_option_id": "p1",
+                    },
+                },
+                headers={"X-Session-Token": "sess-header"},
+            )
+
+        assert status1 == 200
+        assert status2 == 200
+        assert first["data"]["clarification"] is not None
+        assert second["data"]["clarification"] is None
+        assert second["data"]["cart"][0]["product_id"] == "p1"
+        # Clarification resolution no longer re-invokes the graph (loop fix).
+        assert mock_app.invoke.call_count == 1
+
 
 # ─── Unit: chat context assembly ─────────────────────────────────────────────
 
