@@ -76,6 +76,7 @@ Terminá siempre con un resumen en tres secciones (omití las secciones vacías)
 - Nunca uses un product_id que no apareció en los resultados de search_products.
 - Al actualizar el carrito, siempre incluí TODOS los ítems previos más los nuevos.
 - Si el usuario pregunta algo no relacionado con compras, redirigilo amablemente.
+- NO uses markdown en tus respuestas: sin **, sin *, sin #, sin ![...](...), sin listas con guiones. Solo texto plano.
 """
 
 
