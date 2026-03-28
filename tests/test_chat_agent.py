@@ -850,3 +850,115 @@ class TestCleanups:
         assert captured
         total_chars = sum(len(str(message.content)) for message in captured[0])
         assert total_chars < 60_000
+
+    @patch("backend.product_semantic_index.search")
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_ambiguous_search_triggers_clarification_via_build_clarification_candidates(
+        self, mock_load_catalog, mock_llm_cls, mock_search
+    ):
+        """
+        When search_products returns candidates that are materially different
+        (different brands), tools_node must surface a clarification instead of
+        letting set_cart proceed.
+        """
+        ambiguous_catalog = [
+            {
+                "id": "milk-1",
+                "name": "Leche entera La Serenísima",
+                "brand": "La Serenísima",
+                "package_size": "1L",
+                "price": 350.0,
+                "discount_pct": 0,
+                "available_quantity": 10,
+                "image_url": "",
+            },
+            {
+                "id": "milk-2",
+                "name": "Leche entera SanCor",
+                "brand": "SanCor",
+                "package_size": "1L",
+                "price": 320.0,
+                "discount_pct": 0,
+                "available_quantity": 5,
+                "image_url": "",
+            },
+        ]
+        mock_load_catalog.return_value = ambiguous_catalog
+        mock_search.return_value = ambiguous_catalog
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        # Agent searches, then would try to set_cart — but clarification must win
+        llm.invoke.side_effect = [
+            self._ai_with_tool_call("search_products", {"query": "leche"}, "c1"),
+            self._ai_reply("Acá tenés tus opciones de leche."),
+        ]
+        mock_llm_cls.return_value = llm
+
+        result = handle_chat("quiero leche", [], [])
+
+        assert result["clarification"] is not None
+        assert result["cart"] is None
+        option_ids = {opt["id"] for opt in result["clarification"]["options"]}
+        assert "milk-1" in option_ids
+        assert "milk-2" in option_ids
+
+    @patch("backend.product_semantic_index.search")
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_batched_search_and_set_cart_clarification_wins(
+        self, mock_load_catalog, mock_llm_cls, mock_search
+    ):
+        """
+        When a single AI message contains both search_products and set_cart,
+        and the search result is ambiguous, the clarification must win and
+        set_cart must not execute.
+        """
+        ambiguous_catalog = [
+            {
+                "id": "bev-1",
+                "name": "Coca-Cola 1.5L",
+                "brand": "Coca-Cola",
+                "package_size": "1.5L",
+                "price": 800.0,
+                "discount_pct": 0,
+                "available_quantity": 10,
+                "image_url": "",
+            },
+            {
+                "id": "bev-2",
+                "name": "Pepsi 1.5L",
+                "brand": "Pepsi",
+                "package_size": "1.5L",
+                "price": 750.0,
+                "discount_pct": 0,
+                "available_quantity": 8,
+                "image_url": "",
+            },
+        ]
+        mock_load_catalog.return_value = ambiguous_catalog
+        mock_search.return_value = ambiguous_catalog
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+
+        # Batched: search + set_cart in the same tool call list
+        batched_msg = LCAIMessage(
+            content="",
+            tool_calls=[
+                {"name": "search_products", "args": {"query": "bebida cola"}, "id": "c1", "type": "tool_call"},
+                {"name": "set_cart", "args": {"items": [{"product_id": "bev-1", "quantity": 1}]}, "id": "c2", "type": "tool_call"},
+            ],
+        )
+        llm.invoke.side_effect = [
+            batched_msg,
+            self._ai_reply("¿Cuál preferís?"),
+        ]
+        mock_llm_cls.return_value = llm
+
+        result = handle_chat("mete una bebida cola", [], [])
+
+        assert result["clarification"] is not None
+        # set_cart must not have executed — cart stays None
+        assert result["cart"] is None

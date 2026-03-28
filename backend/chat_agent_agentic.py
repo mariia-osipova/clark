@@ -283,6 +283,7 @@ def _build_graph(catalog: list[dict], api_key: str):
         return {"messages": [response]}
 
     def tools_node(state: AgentState) -> dict:
+        from backend.product_semantic_index import build_clarification_candidates
         last_msg = state["messages"][-1]
         result_cart = state.get("result_cart")
         clarification = state.get("clarification")
@@ -290,6 +291,8 @@ def _build_graph(catalog: list[dict], api_key: str):
         new_messages = []
 
         for tc in last_msg.tool_calls:
+            if clarification:
+                break
             tool_fn = tools_by_name[tc["name"]]
             try:
                 result = tool_fn.invoke(tc["args"])
@@ -301,6 +304,16 @@ def _build_graph(catalog: list[dict], api_key: str):
             if tc["name"] == "set_cart":
                 parsed = json.loads(result)
                 result_cart = parsed.get("cart")
+            elif tc["name"] == "search_products":
+                parsed = json.loads(result)
+                if isinstance(parsed, list):
+                    options = build_clarification_candidates(parsed)
+                    if options:
+                        clarification = {
+                            "question": "Encontré varias opciones. ¿Cuál preferís?",
+                            "options": options,
+                            "pending_request_id": str(uuid.uuid4()),
+                        }
             elif tc["name"] == "request_clarification":
                 parsed = json.loads(result)
                 clarification = {
