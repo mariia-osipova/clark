@@ -7,7 +7,6 @@ Tests for Jeremias's V0 agent tasks:
 All tests mock the OpenAI client — no API key required.
 """
 
-import json
 import sys
 import os
 from pathlib import Path
@@ -65,26 +64,6 @@ def sample_catalog():
             "image_url": "",
         },
     ]
-
-
-def _make_openai_response(content=None, tool_name=None, tool_args=None):
-    """Build a minimal mock that mimics openai.ChatCompletion response shape."""
-    choice = MagicMock()
-    choice.message.content = content
-
-    if tool_name:
-        tc = MagicMock()
-        tc.function.name = tool_name
-        tc.function.arguments = json.dumps(tool_args or {})
-        choice.finish_reason = "tool_calls"
-        choice.message.tool_calls = [tc]
-    else:
-        choice.finish_reason = "stop"
-        choice.message.tool_calls = None
-
-    response = MagicMock()
-    response.choices = [choice]
-    return response
 
 
 # ─── System prompt tests ──────────────────────────────────────────────────────

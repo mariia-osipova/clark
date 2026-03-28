@@ -137,13 +137,13 @@ def _make_tools(catalog: list[dict]):
 
 # ─── Graph ────────────────────────────────────────────────────────────────────
 
-def _build_graph(catalog: list[dict]):
+def _build_graph(catalog: list[dict], api_key: str):
     """Compile and return a LangGraph graph closed over the catalog."""
     tools = _make_tools(catalog)
     llm = ChatOpenAI(
         model="gpt-4o-mini",
         temperature=0,
-        api_key=os.environ["OPENAI_API_KEY"],
+        api_key=api_key,
     ).bind_tools(tools)
 
     tools_by_name = {t.name: t for t in tools}
@@ -160,7 +160,10 @@ def _build_graph(catalog: list[dict]):
 
         for tc in last_msg.tool_calls:
             tool_fn = tools_by_name[tc["name"]]
-            result = tool_fn.invoke(tc["args"])
+            try:
+                result = tool_fn.invoke(tc["args"])
+            except Exception as exc:
+                result = json.dumps({"error": str(exc)})
             new_messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
             # Capture side effects
@@ -212,8 +215,11 @@ def handle_chat(
     Internally runs a LangGraph agent loop:
         START → agent → tools → agent → … → END
     """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY environment variable is not set.")
     catalog = _load_catalog()
-    app = _build_graph(catalog)
+    app = _build_graph(catalog, api_key)
 
     # Build initial message list
     init_messages: list = [SystemMessage(content=_build_system_prompt())]
@@ -249,7 +255,7 @@ def handle_chat(
     })
 
     last_msg = final_state["messages"][-1]
-    reply = last_msg.content if isinstance(last_msg, AIMessage) else ""
+    reply = last_msg.content if isinstance(last_msg, AIMessage) and last_msg.content else "Lo siento, no pude completar la acción."
 
     return {
         "reply": reply,
