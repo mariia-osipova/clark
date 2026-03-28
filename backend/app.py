@@ -612,14 +612,17 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             catalog = _load_catalog()
 
+            budget_overflow = False
             try:
                 from backend.product_semantic_index import generate_monthly_basket_candidates
-                candidates = generate_monthly_basket_candidates(
+                basket_result = generate_monthly_basket_candidates(
                     prefs=plan,
                     order_history=order_history,
                     catalog=catalog,
                     budget=plan.get("monthly_budget") or float("inf"),
                 )
+                candidates = basket_result["candidates"]
+                budget_overflow = basket_result["budget_overflow"]
             except (ImportError, AttributeError):
                 # Juan's function not yet available — use rule-based stub
                 candidates = _generate_basket_stub(plan, order_history, catalog)
@@ -648,7 +651,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
             total = round(sum(i["price"] * i["quantity"] for i in proposed_cart), 2)
             _log.info("recurring-plan generate: %d items total=%.2f", len(proposed_cart), total)
-            self.send_json(envelope(data={"proposed_cart": proposed_cart, "total": total}))
+            self.send_json(envelope(data={"proposed_cart": proposed_cart, "total": total, "budget_exceeded": budget_overflow}))
         except Exception as e:
             _log.error("recurring plan generate error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)

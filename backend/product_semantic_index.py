@@ -9,7 +9,7 @@ Provides:
     rank_candidates(candidates, query) -> list[dict]
     find_alternatives(query, catalog, category, top_k) -> list[dict]
     build_clarification_candidates(candidates, max_options) -> list[dict]
-    generate_monthly_basket_candidates(prefs, order_history, catalog, budget) -> list[dict]
+    generate_monthly_basket_candidates(prefs, order_history, catalog, budget) -> dict
     build_index(catalog) -> None   (writes data/product_semantic_index.json)
 """
 
@@ -230,10 +230,13 @@ def generate_monthly_basket_candidates(
     order_history: list[list[dict]],
     catalog: list[dict],
     budget: float,
-) -> list[dict]:
+) -> dict:
     """
     Rule-based monthly basket generator — no LLM involved.
     The LLM presents the result; it does not compute it.
+
+    Returns {"candidates": list[dict], "budget_overflow": bool}.
+    budget_overflow=True when must_have items cost more than budget.
 
     Algorithm (three passes):
       1. Must-haves from prefs["must_haves"]  → tag "must_have"  (always included)
@@ -322,7 +325,7 @@ def generate_monthly_basket_candidates(
                 "quantity": 1,
             })
 
-    return candidates
+    return {"candidates": candidates, "budget_overflow": running_cost > budget}
 
 
 def build_index(catalog: list[dict]) -> None:
