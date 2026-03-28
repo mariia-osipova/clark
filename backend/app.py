@@ -50,6 +50,48 @@ def _validate_order_cart(cart: list, catalog: list) -> list:
     return validated
 
 
+def _assemble_chat_context() -> str | None:
+    """Build a context string from recent order history and saved preferences."""
+    parts = []
+    try:
+        conn = get_db()
+        try:
+            rows = conn.execute(
+                "SELECT cart_json, total, created_at FROM orders ORDER BY created_at DESC LIMIT 3"
+            ).fetchall()
+            pref_row = conn.execute(
+                "SELECT prefs_json FROM preferences WHERE key='default'"
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if rows:
+            lines = ["Historial de compras recientes del usuario:"]
+            for r in rows:
+                items = json.loads(r["cart_json"])
+                names = ", ".join(f"{i['name']} x{i['quantity']}" for i in items[:5])
+                suffix = f" (y {len(items)-5} más)" if len(items) > 5 else ""
+                lines.append(f"- {r['created_at'][:10]}: {names}{suffix} — total ${r['total']:.2f}")
+            parts.append("\n".join(lines))
+
+        if pref_row:
+            prefs = json.loads(pref_row["prefs_json"])
+            pref_lines = []
+            if prefs.get("notes"):
+                pref_lines.append(f"Notas del usuario: {prefs['notes']}")
+            if prefs.get("excluded_categories"):
+                pref_lines.append(f"Categorías excluidas: {', '.join(prefs['excluded_categories'])}")
+            if prefs.get("preferred_brands"):
+                brands = ", ".join(f"{k}: {v}" for k, v in prefs["preferred_brands"].items())
+                pref_lines.append(f"Marcas preferidas: {brands}")
+            if pref_lines:
+                parts.append("Preferencias del usuario:\n" + "\n".join(pref_lines))
+    except Exception:
+        pass  # context is best-effort, never block a chat turn
+
+    return "\n\n".join(parts) if parts else None
+
+
 def envelope(data=None, error=None, request_id=None):
     return {
         "ok": error is None,
@@ -91,6 +133,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._handle_catalog()
         elif path == "/api/v1/orders":
             self._handle_orders_get()
+        elif path == "/api/v1/preferences":
+            self._handle_preferences_get()
         elif path.startswith("/"):
             # Serve static frontend files
             self._serve_static(path)
@@ -110,6 +154,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._handle_auth_login(body)
         elif path == "/api/v1/orders":
             self._handle_orders_post(body)
+        elif path == "/api/v1/preferences":
+            self._handle_preferences_put(body)
         else:
             self.send_json(envelope(error="Not found"), 404)
 
@@ -134,6 +180,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 history=body.get("history", []),
                 cart=body.get("cart", []),
                 clarification_response=body.get("clarification_response"),
+                context=_assemble_chat_context(),
             )
             self.send_json(envelope(data=result))
         except Exception as e:
@@ -186,6 +233,44 @@ class RequestHandler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             self.send_json(envelope(data={"order_id": order_id, "total": total}))
+        except Exception as e:
+            self.send_json(envelope(error=str(e)), 500)
+
+    def _handle_preferences_get(self):
+        try:
+            conn = get_db()
+            try:
+                row = conn.execute(
+                    "SELECT prefs_json, updated_at FROM preferences WHERE key='default'"
+                ).fetchone()
+            finally:
+                conn.close()
+            prefs = json.loads(row["prefs_json"]) if row else {}
+            updated_at = row["updated_at"] if row else None
+            self.send_json(envelope(data={"preferences": prefs, "updated_at": updated_at}))
+        except Exception as e:
+            self.send_json(envelope(error=str(e)), 500)
+
+    def _handle_preferences_put(self, body: dict):
+        try:
+            prefs = body.get("preferences", {})
+            if not isinstance(prefs, dict):
+                self.send_json(envelope(error="preferences must be an object"), 400)
+                return
+            conn = get_db()
+            try:
+                conn.execute(
+                    """INSERT INTO preferences (key, prefs_json, updated_at)
+                       VALUES ('default', ?, datetime('now'))
+                       ON CONFLICT(key) DO UPDATE SET
+                           prefs_json = excluded.prefs_json,
+                           updated_at = excluded.updated_at""",
+                    (json.dumps(prefs),),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.send_json(envelope(data={"preferences": prefs}))
         except Exception as e:
             self.send_json(envelope(error=str(e)), 500)
 

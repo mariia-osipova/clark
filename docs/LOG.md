@@ -2,6 +2,14 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-27 — Nacho — VERSION2: preferences persistence + chat context assembly
+
+**Type:** feature
+
+Added `preferences` table to SQLite schema (backend/db.py, scripts/migrate_v2_preferences.py). Implemented `GET /api/v1/preferences` and `PUT /api/v1/preferences` endpoints. Added `_assemble_chat_context()` in app.py: loads last 3 orders and saved preferences from SQLite, builds a context string passed to `handle_chat()` as a `context` kwarg. Added `context` param to `handle_chat()` signature (chat_agent_agentic.py) — injected as a SystemMessage before history. Added V2 integration and unit tests to tests/test_api.py. Updated docs/api.md.
+
+---
+
 ## 2026-03-27 — Jeremias — VERSION2 agent: query decomposition, substitution, missing tracking
 
 **Type:** feature
