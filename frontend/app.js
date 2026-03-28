@@ -269,7 +269,7 @@ function appendChatMsg(role, text) {
   return el;
 }
 
-// ─── Clarification modal (V3) ─────────────────────────────────────────────────
+// ─── Clarification modal ──────────────────────────────────────────────────────
 function showClarificationModal(clarification) {
   const modal = document.getElementById('clarification-modal');
   const question = document.getElementById('modal-question');

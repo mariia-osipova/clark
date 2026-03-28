@@ -28,18 +28,23 @@ _INDEX_CACHE: dict = {}   # key "entries" → list[{id, embedding}], "path_mtime
 def search(query: str, catalog: list[dict], top_k: int = 10) -> list[dict]:
     """
     Return up to top_k products matching the query, re-ranked by brand/size signals.
-    V2: semantic retrieval → rank_candidates (brand +5, size +5, discount boost).
+    Uses semantic retrieval before rank_candidates (brand +5, size +5, discount boost).
     Falls back to keyword filter if the semantic index is not available.
     """
     candidates = _semantic_candidates(query, catalog, top_k * 3)
     if not candidates:
-        # Fallback: keyword filter (V0 behaviour, works without an index)
+        # Fallback: keyword filter that works without a semantic index
         tokens = _tokenize(query)
         candidates = [
             p for p in catalog
             if p.get("available_quantity", 1) != 0 and _keyword_score(tokens, p) > 0
         ]
-    return rank_candidates(candidates, query)[:top_k]
+        return rank_candidates(candidates, query)[:top_k]
+
+    # Semantic candidates: re-rank by keyword/brand/size signals.
+    # If none score above zero (broad query like "para el desayuno"), preserve semantic order.
+    reranked = rank_candidates(candidates, query)
+    return (reranked if reranked else candidates)[:top_k]
 
 
 def rank_candidates(candidates: list[dict], query: str) -> list[dict]:
@@ -104,7 +109,7 @@ def build_index(catalog: list[dict]) -> None:
       - 384-dimensional embeddings
       - Downloaded automatically from HuggingFace on first run (~450 MB)
 
-    V2: swap search() to load this index and rank by cosine similarity.
+    search() loads this index and re-ranks by cosine similarity.
     """
     try:
         from sentence_transformers import SentenceTransformer
@@ -130,7 +135,7 @@ def build_index(catalog: list[dict]) -> None:
     ]
 
     index = {
-        "version": "v0",
+        "version": "current",
         "model": model_name,
         "entries": entries,
     }
@@ -146,13 +151,13 @@ def _tokenize(text: str) -> list[str]:
 
 
 def _keyword_score(tokens: list[str], product: dict) -> float:
-    searchable = " ".join([
+    searchable = _normalize_text(" ".join([
         product.get("name", ""),
         product.get("brand", ""),
         product.get("category", ""),
         product.get("package_size", ""),
-    ]).lower()
-    return sum(1 for t in tokens if t in searchable)
+    ]))
+    return sum(1 for t in tokens if _normalize_text(t) in searchable)
 
 
 def _product_text(product: dict) -> str:
@@ -309,5 +314,4 @@ def _size_score(query: str, product: dict) -> float:
     if query_size and product_size and query_size == product_size:
         return 5.0
     return 0.0
-
 

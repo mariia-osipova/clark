@@ -7,11 +7,10 @@ All responses use the envelope:
 """
 
 import json
-import os
 import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse
 
 from backend.db import get_db
 
@@ -277,7 +276,14 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _serve_static(self, path: str):
         if path == "/" or path == "":
             path = "/index.html"
-        file_path = ROOT / "frontend" / path.lstrip("/")
+        frontend_root = (ROOT / "frontend").resolve()
+        file_path = (frontend_root / path.lstrip("/")).resolve()
+        try:
+            file_path.relative_to(frontend_root)
+        except ValueError:
+            self.send_response(403)
+            self.end_headers()
+            return
         if not file_path.exists() or not file_path.is_file():
             self.send_response(404)
             self.end_headers()

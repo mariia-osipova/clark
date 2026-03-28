@@ -1,8 +1,8 @@
 # HACKATHON BUILD PLAN
 
-## Entrega Ya - versioned execution plan
+## Entrega Ya - current execution plan
 
-This plan follows the real codebase shape that already exists today, but it is trimmed for a hackathon. Every item below should either improve the live demo, reduce demo risk, or unlock the next visible version. Anything that does not materially help the demo is intentionally left out.
+This plan follows the real codebase shape that already exists today, but it is trimmed for a hackathon. Every item below should either improve the live demo, reduce demo risk, or unlock the next visible milestone. Anything that does not materially help the demo is intentionally left out.
 
 ## Current status
 
@@ -45,7 +45,7 @@ This plan follows the real codebase shape that already exists today, but it is t
 
 ## Team focus throughout
 
-| Person | Standing emphasis across all versions |
+| Person | Standing emphasis across the current project phases |
 |---|---|
 | Jeremias | Agent behavior, prompt strategy, multi-step cart assembly, clarification logic, automation logic |
 | Juan | Catalog scraping, product normalization, ranking, semantic search, offers reasoning, evaluation harness and regression tracking |
@@ -185,6 +185,7 @@ The user can ask for a recipe, a meal goal, or a broader shopping intent, and th
 - ✅ Automated eval scenarios exist for recipes, multi-item goals, and alternatives.
 
 ## VERSION3 🔜
+## Current target
 
 **Clarification popup plus offers-aware cart reasoning**
 
@@ -229,6 +230,7 @@ When the assistant is unsure between several materially different options, it do
 - ⬜ The clarification and offers scenarios pass in the eval suite.
 
 ## VERSION4 ⬜
+## Next phase
 
 **Full automation with a monthly buys tab**
 

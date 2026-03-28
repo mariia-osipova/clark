@@ -1,5 +1,5 @@
 """
-Tests for Jeremias's V0 agent tasks:
+Tests for Jeremias's chat agent tasks:
   - Chat backend wraps the OpenAI API
   - Prompt style and reply tone are defined
   - Catalog context is injected into the system prompt
@@ -9,6 +9,7 @@ All tests mock the OpenAI client — no API key required.
 
 import sys
 import os
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -90,6 +91,15 @@ class TestSystemPrompt:
     def test_prompt_mentions_spanish_awareness(self):
         prompt = _build_system_prompt()
         assert "español" in prompt.lower()
+
+    def test_prompt_mentions_request_clarification(self):
+        prompt = _build_system_prompt()
+        assert "request_clarification" in prompt
+
+    def test_prompt_clarification_example_has_two_options(self):
+        prompt = _build_system_prompt()
+        lowered = prompt.lower()
+        assert "ambigu" in lowered or "opción" in lowered or "opcion" in lowered
 
 
 # ─── Catalog summary tests ────────────────────────────────────────────────────
@@ -190,13 +200,21 @@ def _make_graph_state(reply="ok", result_cart=None, clarification=None):
     from langchain_core.messages import AIMessage
     return {
         "messages": [AIMessage(content=reply)],
-        "catalog": [],
         "result_cart": result_cart,
         "clarification": clarification,
+        "missing_items": [],
     }
 
 
 class TestHandleChat:
+    def setup_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
+    def teardown_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
     def test_returns_reply_on_plain_response(self, mock_build_graph, mock_load_catalog, sample_catalog):
@@ -325,6 +343,14 @@ class TestAgenticLoop:
     Mocks ChatOpenAI so the real graph (nodes + edges + tool execution) runs.
     """
 
+    def setup_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
+    def teardown_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
     def _ai_with_tool_call(self, tool_name, tool_args, call_id="call_1"):
         """AIMessage that triggers a tool call."""
         return LCAIMessage(
@@ -426,3 +452,306 @@ class TestAgenticLoop:
 
         assert result["cart"] is not None
         assert all(i["product_id"] != "p3" for i in result["cart"])
+
+    @patch("backend.product_semantic_index.search")
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_graph_halts_after_request_clarification(
+        self, mock_load_catalog, mock_llm_cls, mock_search, sample_catalog
+    ):
+        """Graph must stop immediately after request_clarification — no extra LLM call."""
+        mock_load_catalog.return_value = sample_catalog
+        mock_search.return_value = [sample_catalog[0]]
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.side_effect = [
+            self._ai_with_tool_call(
+                "request_clarification",
+                {
+                    "question": "¿Cuál leche querés?",
+                    "options": [
+                        {"id": "opt1", "label": "Entera"},
+                        {"id": "opt2", "label": "Descremada"},
+                    ],
+                },
+                "c1",
+            ),
+            self._ai_reply("Extra unexpected reply"),
+        ]
+        mock_llm_cls.return_value = llm
+
+        result = handle_chat("quiero leche", [], [])
+
+        assert llm.invoke.call_count == 1, (
+            f"Expected 1 LLM call, got {llm.invoke.call_count}. "
+            "Graph did not halt after request_clarification."
+        )
+        assert result["clarification"] is not None
+        assert result["clarification"]["question"] == "¿Cuál leche querés?"
+        assert result["reply"] == "¿Cuál leche querés?"
+
+    @patch("backend.product_semantic_index.search")
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_clarification_tool_result_contains_pending_id(
+        self, mock_load_catalog, mock_llm_cls, mock_search, sample_catalog
+    ):
+        """request_clarification must return a pending_request_id in its JSON payload."""
+        mock_load_catalog.return_value = sample_catalog
+        mock_search.return_value = [sample_catalog[0]]
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.return_value = self._ai_reply("ok")
+        mock_llm_cls.return_value = llm
+
+        from backend.chat_agent_agentic import _make_tools
+
+        tools = _make_tools(sample_catalog)
+        req_clarification = next(t for t in tools if t.name == "request_clarification")
+        result_json = req_clarification.invoke(
+            {"question": "¿Cuál?", "options": [{"id": "o1", "label": "A"}]}
+        )
+        result = json.loads(result_json)
+
+        assert "pending_request_id" in result
+        assert result["pending_request_id"]
+
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_set_cart_reports_dropped_items(
+        self, mock_load_catalog, mock_llm_cls, sample_catalog
+    ):
+        """When set_cart drops invalid items, the ToolMessage must list them."""
+        mock_load_catalog.return_value = sample_catalog
+
+        captured_tool_messages = []
+        invoke_count = 0
+
+        def invoke(messages):
+            nonlocal invoke_count
+            from langchain_core.messages import ToolMessage
+
+            if invoke_count == 0:
+                invoke_count += 1
+                return self._ai_with_tool_call(
+                    "set_cart",
+                    {
+                        "items": [
+                            {"product_id": "p1", "quantity": 1},
+                            {"product_id": "bad_id", "quantity": 1},
+                            {"product_id": "p3", "quantity": 1},
+                        ]
+                    },
+                    "c1",
+                )
+            captured_tool_messages.extend(
+                [message for message in messages if isinstance(message, ToolMessage)]
+            )
+            return self._ai_reply("ok")
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.side_effect = invoke
+        mock_llm_cls.return_value = llm
+
+        handle_chat("poneme leche, cosa_mala y pan", [], [])
+
+        assert len(captured_tool_messages) == 1
+        result = json.loads(captured_tool_messages[0].content)
+        assert "dropped" in result
+        assert len(result["dropped"]) == 2
+        dropped_ids = {item["product_id"] for item in result["dropped"]}
+        assert dropped_ids == {"bad_id", "p3"}
+
+
+class TestSingletonCache:
+    def setup_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
+    def teardown_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_graph_built_once_across_two_calls(
+        self, mock_load_catalog, mock_llm_cls, sample_catalog
+    ):
+        mock_load_catalog.return_value = sample_catalog
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.return_value = LCAIMessage(content="ok")
+        mock_llm_cls.return_value = llm
+
+        handle_chat("hola", [], [])
+        handle_chat("cómo estás", [], [])
+
+        assert mock_llm_cls.call_count == 1
+
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_catalog_loaded_once_across_two_calls(
+        self, mock_load_catalog, mock_llm_cls, sample_catalog
+    ):
+        mock_load_catalog.return_value = sample_catalog
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.return_value = LCAIMessage(content="ok")
+        mock_llm_cls.return_value = llm
+
+        handle_chat("hola", [], [])
+        handle_chat("adiós", [], [])
+
+        assert mock_load_catalog.call_count == 1
+
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_reset_cache_forces_rebuild(self, mock_load_catalog, mock_llm_cls, sample_catalog):
+        mock_load_catalog.return_value = sample_catalog
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.return_value = LCAIMessage(content="ok")
+        mock_llm_cls.return_value = llm
+
+        handle_chat("hola", [], [])
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+        handle_chat("hola de nuevo", [], [])
+
+        assert mock_llm_cls.call_count == 2
+
+
+class TestResilience:
+    def setup_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
+    def teardown_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_llm_constructed_with_timeout(self, mock_load_catalog, mock_llm_cls, sample_catalog):
+        mock_load_catalog.return_value = sample_catalog
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.return_value = LCAIMessage(content="ok")
+        mock_llm_cls.return_value = llm
+
+        handle_chat("hola", [], [])
+
+        call_kwargs = mock_llm_cls.call_args.kwargs
+        assert "timeout" in call_kwargs
+        assert call_kwargs["timeout"] > 0
+
+    @patch("backend.chat_agent_agentic._get_or_build_app")
+    def test_invoke_called_with_recursion_limit(self, mock_get_or_build_app):
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="ok")
+        mock_get_or_build_app.return_value = (mock_app, [])
+
+        handle_chat("hola", [], [])
+
+        _, kwargs = mock_app.invoke.call_args
+        assert "config" in kwargs
+        assert kwargs["config"]["recursion_limit"] >= 20
+
+
+class TestCleanups:
+    def setup_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
+    def teardown_method(self):
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+
+    def _ai_with_tool_call(self, tool_name, tool_args, call_id="call_1"):
+        return LCAIMessage(
+            content="",
+            tool_calls=[{"name": tool_name, "args": tool_args, "id": call_id, "type": "tool_call"}],
+        )
+
+    def _ai_reply(self, text):
+        return LCAIMessage(content=text)
+
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_missing_items_dedup_is_case_insensitive(
+        self, mock_load_catalog, mock_llm_cls, sample_catalog
+    ):
+        mock_load_catalog.return_value = sample_catalog
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.side_effect = [
+            self._ai_with_tool_call("report_missing", {"ingredient": "Sal"}, "c1"),
+            self._ai_with_tool_call("report_missing", {"ingredient": "sal"}, "c2"),
+            self._ai_reply("ok"),
+        ]
+        mock_llm_cls.return_value = llm
+
+        result = handle_chat("necesito sal", [], [])
+
+        assert result["missing_items"] == ["sal"]
+
+    @patch("backend.product_semantic_index.search", side_effect=RuntimeError("SECRET_INTERNAL_PATH=/opt/server"))
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_tool_exception_message_is_sanitized(
+        self, mock_load_catalog, mock_llm_cls, _mock_search, sample_catalog
+    ):
+        mock_load_catalog.return_value = sample_catalog
+        captured = []
+
+        def invoke(messages):
+            captured.append(list(messages))
+            if len(captured) == 1:
+                return self._ai_with_tool_call("search_products", {"query": "leche"}, "c1")
+            return self._ai_reply("ok")
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.side_effect = invoke
+        mock_llm_cls.return_value = llm
+
+        handle_chat("quiero leche", [], [])
+
+        from langchain_core.messages import ToolMessage
+
+        tool_messages = [m for m in captured[1] if isinstance(m, ToolMessage)]
+        assert tool_messages
+        for tool_message in tool_messages:
+            assert "SECRET_INTERNAL_PATH" not in tool_message.content
+
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_huge_history_does_not_exceed_char_budget(
+        self, mock_load_catalog, mock_llm_cls, sample_catalog
+    ):
+        mock_load_catalog.return_value = sample_catalog
+        captured = []
+
+        def invoke(messages):
+            captured.append(list(messages))
+            return self._ai_reply("ok")
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.side_effect = invoke
+        mock_llm_cls.return_value = llm
+
+        huge_history = [
+            {"role": "user" if i % 2 == 0 else "assistant", "content": "x" * 5000}
+            for i in range(25)
+        ]
+
+        handle_chat("hola", huge_history, [])
+
+        assert captured
+        total_chars = sum(len(str(message.content)) for message in captured[0])
+        assert total_chars < 60_000

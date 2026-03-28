@@ -21,7 +21,7 @@ Browser
 ```
 
 ## Frontend state machine (`frontend/app.js`)
-- Tabs: Catalog | Cart | Chat | (V4: Monthly Buys)
+- Tabs: Catalog | Cart | Chat | future Monthly Buys tab
 - Persistent state in `localStorage`: cart items, session token, chat history
 - Cart total computed client-side, confirmed by server on each chat response
 
@@ -29,11 +29,16 @@ Browser
 | File | Responsibility |
 |---|---|
 | `server.py` | Entry point, env loading, `ThreadingHTTPServer` setup |
-| `app.py` | Route dispatch, request parsing, response envelope |
+| `app.py` | Route dispatch, request parsing, response envelope, static file serving with traversal guard |
 | `chat_agent.py` | Thin compatibility shim (legacy) |
-| `chat_agent_agentic.py` | Agentic shopping flow, tool calls, cart mutations |
+| `chat_agent_agentic.py` | LangGraph shopping agent, tool calls, clarification flow, missing-item tracking, cached graph/catalog reuse |
 | `product_semantic_index.py` | Semantic retrieval and ranking over catalog snapshot |
 | `llm_eval_harness.py` | LLM judge eval suite definitions |
+
+## Agent runtime notes
+- `chat_agent_agentic.py` caches the compiled LangGraph app and loaded catalog at module scope to avoid rebuilding them on every request.
+- Chat turns run with an explicit `recursion_limit` and a model timeout to prevent runaway loops and hung server threads.
+- Clarification requests halt the graph immediately after tool execution; the frontend resumes the flow by POSTing `clarification_response`.
 
 ## Data directory
 | File | Description |
@@ -48,7 +53,7 @@ Browser
   "ok": true,
   "data": { },
   "error": null,
-  "request_id": "uuid-v4"
+  "request_id": "uuid"
 }
 ```
 

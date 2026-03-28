@@ -37,7 +37,7 @@ Returns the normalized product catalog.
 
 ## POST /api/v1/chat
 
-Send a chat message. Returns assistant reply and (from V1) authoritative cart state.
+Send a chat message. Returns assistant reply, authoritative cart state, clarification metadata when needed, and missing ingredient tracking.
 
 **Request body:**
 ```json
@@ -46,19 +46,27 @@ Send a chat message. Returns assistant reply and (from V1) authoritative cart st
   "history": [
     { "role": "user|assistant", "content": "string" }
   ],
-  "cart": []
+  "cart": [],
+  "clarification_response": {
+    "pending_request_id": "string",
+    "chosen_option_id": "string"
+  }
 }
 ```
+
+`clarification_response` is optional and should only be sent when the user is answering a previously returned clarification prompt.
 
 **Response `data`:**
 ```json
 {
   "reply": "string",
-  "cart": []
+  "cart": [],
+  "clarification": null,
+  "missing_items": []
 }
 ```
 
-**Cart item shape (V1+):**
+**Cart item shape:**
 ```json
 {
   "product_id": "string",
@@ -71,19 +79,26 @@ Send a chat message. Returns assistant reply and (from V1) authoritative cart st
 }
 ```
 
-**Clarification response (V3+):** when `ok` is true but `data.clarification` is present, the UI should show the clarification modal instead of updating the cart:
+**Clarification response:** when `ok` is true but `data.clarification` is present, the UI should show the clarification modal instead of updating the cart:
 ```json
 {
   "reply": "string",
+  "cart": null,
   "clarification": {
     "question": "string",
     "options": [
       { "id": "string", "label": "string", "product": { } }
     ],
     "pending_request_id": "string"
-  }
+  },
+  "missing_items": []
 }
 ```
+
+Notes:
+- When `clarification` is present, `reply` mirrors the clarification question so the chat transcript stays readable.
+- `missing_items` contains normalized ingredient/product names the agent could not find while decomposing a recipe or broad shopping goal.
+- Server-side history is trimmed by character budget before calling the model; clients can still send full local history.
 
 ---
 
@@ -139,7 +154,7 @@ Save or replace user preferences.
 
 ---
 
-## POST /api/v1/monthly-plan (V4)
+## POST /api/v1/monthly-plan (planned)
 
 Save or update recurring monthly shopping configuration.
 
@@ -156,7 +171,7 @@ Save or update recurring monthly shopping configuration.
 }
 ```
 
-## POST /api/v1/monthly-plan/generate (V4)
+## POST /api/v1/monthly-plan/generate (planned)
 
 Trigger monthly cart generation from saved config + order history + current catalog.
 

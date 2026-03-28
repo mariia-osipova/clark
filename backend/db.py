@@ -2,14 +2,12 @@
 SQLite helpers — schema init and connection factory.
 Owner: Nacho
 
-Tables (V0):
+Tables:
     users       — registered users
     sessions    — session tokens linked to users
 
-Tables (V1):
+Additional tables:
     orders      — placed orders with cart snapshot and total
-
-Tables (V2):
     preferences — user preference blob (key/value, key='default' until auth lands)
 """
 
