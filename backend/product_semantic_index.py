@@ -100,6 +100,7 @@ def find_alternatives(
         candidates = [p for p in pool if _keyword_score(tokens, p) > 0]
         if not candidates:
             # Last resort: return anything in-stock from pool, skip re-ranking
+            print(f"[find_alternatives] no matches for {query!r} — returning unranked pool fallback")
             return pool[:top_k]
 
     return rank_candidates(candidates, query)[:top_k]
@@ -131,7 +132,6 @@ def build_clarification_candidates(
         {
             "id": p["id"],
             "label": " ".join(filter(None, [
-                p.get("brand", ""),
                 p.get("name", ""),
                 p.get("package_size", ""),
             ])),
