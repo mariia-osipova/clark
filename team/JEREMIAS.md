@@ -10,9 +10,9 @@ You are assisting Jeremias. His focus is the AI agent behavior, prompt strategy,
 ## Current version: VERSION3 active
 
 ## Current focus
-- [ ] Tighten clarification generation and continuation logic in `backend/chat_agent_agentic.py`
-- [ ] Make ambiguous requests produce structured option sets instead of free-form uncertainty
-- [ ] Balance user intent with offer-aware ranking without making overly aggressive substitutions
+- [x] Tighten clarification generation and continuation logic in `backend/chat_agent_agentic.py`
+- [x] Make ambiguous requests produce structured option sets instead of free-form uncertainty
+- [x] Balance user intent with offer-aware ranking without making overly aggressive substitutions
 
 ## Next focus
 - [ ] Prepare monthly planning prompt and recurring-generation logic after clarification flow is stable
