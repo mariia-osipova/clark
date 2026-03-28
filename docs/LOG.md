@@ -10,6 +10,14 @@ Replaced the raw OpenAI agentic loop in `chat_agent_agentic.py` with a LangGraph
 
 ---
 
+## 2026-03-27 — Nacho — VERSION1 backend: orders persistence + cart validation
+
+**Type:** feature
+
+Added `orders` table to SQLite schema (backend/db.py, scripts/migrate_v1_orders.py). Implemented `_validate_order_cart()` in app.py: drops unknown/out-of-stock items, enforces catalog prices over client-supplied values. `POST /api/v1/orders` now validates cart and persists to SQLite. `GET /api/v1/orders` reads order history from SQLite. Added tests/test_api.py (envelope, cart validation, total computation, catalog and orders integration tests). Updated .gitignore.
+
+---
+
 ## 2026-03-27 — Jeremias — VERSION0 unite gate passed, starting VERSION1
 
 **Type:** version
