@@ -42,7 +42,11 @@ def main() -> None:
     load_env()
     init_db()
 
-    port = int(os.environ.get("PORT", 8000))
+    try:
+        port = int(os.environ.get("PORT", 8000))
+    except ValueError:
+        print("WARNING: invalid PORT value, using 8000")
+        port = 8000
     host = os.environ.get("HOST", "0.0.0.0")
 
     if not os.environ.get("OPENAI_API_KEY"):
@@ -54,8 +58,8 @@ def main() -> None:
         print("Loading embedding model...", end=" ", flush=True)
         _load_model()
         print("ready.")
-    except Exception:
-        pass  # non-fatal
+    except Exception as e:
+        print(f"WARNING: could not pre-load embedding model: {e}")
 
     server = ThreadingHTTPServer((host, port), RequestHandler)
     print(f"supershop server running at http://{host}:{port}")

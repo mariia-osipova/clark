@@ -7,6 +7,11 @@ Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) fo
 **Type:** decision
 
 Recorded a permanent engineering rule for the shopping agent: never solve behavior bugs with phrase-specific heuristics, one-off guards, or other ad hoc logic. Future enforced behavior in `backend/chat_agent_agentic.py` must be expressed through LangGraph structure, graph state, tool-grounded runtime invariants, or similarly general mechanisms. Added this as a repo non-negotiable in `CLAUDE.md` and as a Jeremias-area convention in `team/JEREMIAS.md`.
+## 2026-03-28 — Nacho — VERSION3: clarification contract + defensive validation + request logging
+
+**Type:** feature
+
+Added `_validate_clarification_response()`: validates pending_request_id and chosen_option_id (type, non-empty, strips whitespace), returns None for any malformed payload. Added `_validate_chat_body()`: normalizes message (string, stripped), filters invalid history items, filters cart items without product_id, validates clarification payload. Added structured request logging via Python `logging` module — chat requests log request_id, message preview, cart size, and clarification flag; errors log with exc_info. Added `_handle_orders_post` body validation (400 on non-list cart). 135 tests passing.
 
 ---
 

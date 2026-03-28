@@ -7,6 +7,8 @@ Tests for Nacho's backend tasks:
   - GET /api/v1/catalog (integration)
   - GET/PUT /api/v1/preferences (integration)
   - _assemble_chat_context() — order history + preferences context
+  - _validate_clarification_response() — V3 clarification contract
+  - _validate_chat_body() — V3 defensive chat body validation
 
 No OpenAI API key required.
 """
@@ -26,8 +28,13 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from backend.app import _validate_order_cart, _assemble_chat_context, envelope
-from backend.clarification_store import _reset_pending_clarifications
+from backend.app import (
+    _assemble_chat_context,
+    _validate_chat_body,
+    _validate_clarification_response,
+    _validate_order_cart,
+    envelope,
+)
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -76,7 +83,7 @@ def test_server(tmp_path):
     from backend.app import RequestHandler
 
     init_db()
-    _reset_pending_clarifications()
+    pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), RequestHandler)
     port = server.server_address[1]
@@ -87,7 +94,7 @@ def test_server(tmp_path):
     yield f"http://127.0.0.1:{port}"
 
     server.shutdown()
-    _reset_pending_clarifications()
+    pass
     del os.environ["DB_PATH"]
 
 
@@ -326,25 +333,7 @@ class TestPreferencesEndpoint:
 
 
 class TestChatEndpoint:
-    def test_clarification_response_requires_session_token(self, test_server):
-        result, status = _post(
-            f"{test_server}/api/v1/chat",
-            {
-                "message": "__clarification__",
-                "history": [],
-                "cart": [],
-                "clarification_response": {
-                    "pending_request_id": "pending-1",
-                    "chosen_option_id": "opt1",
-                },
-            },
-        )
-        assert status == 400
-        assert result["ok"] is False
-        assert "X-Session-Token" in result["error"]
-
-    def test_clarification_round_trip_with_same_session_token(self, test_server, sample_catalog):
-        session_headers = {"X-Session-Token": "session-1"}
+    def test_clarification_round_trip(self, test_server, sample_catalog):
         clarification = {
             "question": "¿Cuál leche querés?",
             "options": [
@@ -376,7 +365,6 @@ class TestChatEndpoint:
             first, status1 = _post(
                 f"{test_server}/api/v1/chat",
                 {"message": "quiero leche", "history": [], "cart": []},
-                headers=session_headers,
             )
             second, status2 = _post(
                 f"{test_server}/api/v1/chat",
@@ -389,49 +377,12 @@ class TestChatEndpoint:
                         "chosen_option_id": "opt1",
                     },
                 },
-                headers=session_headers,
             )
 
         assert status1 == 200
         assert status2 == 200
         assert first["data"]["clarification"]["pending_request_id"] == "pending-1"
         assert second["data"]["cart"][0]["product_id"] == "p1"
-
-    def test_wrong_session_token_cannot_resolve_other_sessions_clarification(self, test_server, sample_catalog):
-        clarification = {
-            "question": "¿Cuál leche querés?",
-            "options": [
-                {"id": "opt1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]},
-            ],
-            "pending_request_id": "pending-1",
-        }
-        mock_app = MagicMock()
-        mock_app.invoke.return_value = _graph_state(reply="¿Cuál leche querés?", clarification=clarification)
-
-        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), patch(
-            "backend.chat_agent_agentic._build_graph", return_value=mock_app
-        ):
-            _post(
-                f"{test_server}/api/v1/chat",
-                {"message": "quiero leche", "history": [], "cart": []},
-                headers={"X-Session-Token": "session-1"},
-            )
-            second, status2 = _post(
-                f"{test_server}/api/v1/chat",
-                {
-                    "message": "Leche entera La Serenísima 1L",
-                    "history": [],
-                    "cart": [],
-                    "clarification_response": {
-                        "pending_request_id": "pending-1",
-                        "chosen_option_id": "opt1",
-                    },
-                },
-                headers={"X-Session-Token": "session-2"},
-            )
-
-        assert status2 == 400
-        assert second["ok"] is False
 
 
 # ─── Unit: chat context assembly ─────────────────────────────────────────────
@@ -531,3 +482,134 @@ class TestServeStaticSecurity:
             handler._serve_static("/index.html")
 
         assert 200 in responses
+
+
+# ─── V3: clarification response validation ───────────────────────────────────
+
+class TestValidateClarificationResponse:
+    def test_none_returns_none(self):
+        assert _validate_clarification_response(None) is None
+
+    def test_valid_payload_passes_through(self):
+        raw = {"pending_request_id": "abc-123", "chosen_option_id": "opt1"}
+        result = _validate_clarification_response(raw)
+        assert result == {"pending_request_id": "abc-123", "chosen_option_id": "opt1"}
+
+    def test_non_dict_returns_none(self):
+        assert _validate_clarification_response("string") is None
+        assert _validate_clarification_response(42) is None
+        assert _validate_clarification_response([]) is None
+
+    def test_missing_pending_request_id_returns_none(self):
+        assert _validate_clarification_response({"chosen_option_id": "opt1"}) is None
+
+    def test_missing_chosen_option_id_returns_none(self):
+        assert _validate_clarification_response({"pending_request_id": "abc-123"}) is None
+
+    def test_empty_pending_request_id_returns_none(self):
+        assert _validate_clarification_response({"pending_request_id": "  ", "chosen_option_id": "opt1"}) is None
+
+    def test_empty_chosen_option_id_returns_none(self):
+        assert _validate_clarification_response({"pending_request_id": "abc", "chosen_option_id": ""}) is None
+
+    def test_non_string_fields_return_none(self):
+        assert _validate_clarification_response({"pending_request_id": 123, "chosen_option_id": "opt1"}) is None
+
+    def test_strips_whitespace(self):
+        raw = {"pending_request_id": " abc-123 ", "chosen_option_id": " opt1 "}
+        result = _validate_clarification_response(raw)
+        assert result["pending_request_id"] == "abc-123"
+        assert result["chosen_option_id"] == "opt1"
+
+
+# ─── V3: chat body validation ─────────────────────────────────────────────────
+
+class TestValidateChatBody:
+    def test_valid_body_passes_through(self):
+        body = {"message": "hola", "history": [], "cart": []}
+        msg, hist, cart, clarification, err = _validate_chat_body(body)
+        assert msg == "hola"
+        assert hist == []
+        assert cart == []
+        assert clarification is None
+        assert err is None
+
+    def test_non_string_message_returns_error(self):
+        _, _, _, _, err = _validate_chat_body({"message": 123})
+        assert err is not None
+
+    def test_message_is_stripped(self):
+        msg, _, _, _, err = _validate_chat_body({"message": "  hola  "})
+        assert msg == "hola"
+        assert err is None
+
+    def test_non_list_history_is_discarded(self):
+        _, hist, _, _, err = _validate_chat_body({"message": "hi", "history": "bad"})
+        assert hist == []
+        assert err is None
+
+    def test_invalid_history_items_are_filtered(self):
+        history = [
+            {"role": "user", "content": "valid"},
+            {"role": "user"},          # missing content
+            {"content": "no role"},    # missing role
+            "not a dict",
+        ]
+        _, hist, _, _, _ = _validate_chat_body({"message": "hi", "history": history})
+        assert len(hist) == 1
+        assert hist[0]["content"] == "valid"
+
+    def test_non_list_cart_is_discarded(self):
+        _, _, cart, _, err = _validate_chat_body({"message": "hi", "cart": "bad"})
+        assert cart == []
+        assert err is None
+
+    def test_cart_items_without_product_id_are_filtered(self):
+        cart = [
+            {"product_id": "p1", "quantity": 1},
+            {"quantity": 2},  # no product_id
+        ]
+        _, _, result_cart, _, _ = _validate_chat_body({"message": "hi", "cart": cart})
+        assert len(result_cart) == 1
+        assert result_cart[0]["product_id"] == "p1"
+
+    def test_clarification_response_is_validated(self):
+        body = {
+            "message": "hi",
+            "clarification_response": {"pending_request_id": "x", "chosen_option_id": "y"},
+        }
+        _, _, _, clarification, _ = _validate_chat_body(body)
+        assert clarification == {"pending_request_id": "x", "chosen_option_id": "y"}
+
+    def test_malformed_clarification_response_is_ignored(self):
+        body = {"message": "hi", "clarification_response": "bad"}
+        _, _, _, clarification, _ = _validate_chat_body(body)
+        assert clarification is None
+
+    def test_empty_body_returns_defaults(self):
+        msg, hist, cart, clarification, err = _validate_chat_body({})
+        assert msg == ""
+        assert hist == []
+        assert cart == []
+        assert clarification is None
+        assert err is None
+
+
+# ─── V3: integration — defensive validation on endpoints ─────────────────────
+
+class TestDefensiveValidation:
+    def test_orders_post_non_list_cart_returns_400(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/orders", {"cart": "bad"})
+        assert status == 400
+        assert result["ok"] is False
+
+    def test_chat_post_non_string_message_returns_400(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/chat", {"message": 999})
+        assert status == 400
+        assert result["ok"] is False
+
+    def test_chat_post_malformed_clarification_returns_400(self, test_server):
+        # Non-string message + malformed clarification — caught by body validation before OpenAI
+        result, status = _post(f"{test_server}/api/v1/chat", {"message": 999, "clarification_response": "garbage"})
+        assert status == 400
+        assert result["ok"] is False

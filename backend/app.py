@@ -7,6 +7,8 @@ All responses use the envelope:
 """
 
 import json
+import logging
+import sys
 import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
@@ -14,6 +16,14 @@ from urllib.parse import urlparse
 
 from backend.clarification_store import ClarificationStateError
 from backend.db import get_db
+
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
+_log = logging.getLogger("supershop")
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
@@ -37,7 +47,10 @@ def _validate_order_cart(cart: list, catalog: list) -> list:
             continue
         if product.get("available_quantity", 0) == 0:
             continue
-        qty = max(1, int(item.get("quantity", 1)))
+        try:
+            qty = max(1, int(item.get("quantity", 1)))
+        except (ValueError, TypeError):
+            qty = 1
         validated.append({
             "product_id": pid,
             "name": product.get("name", ""),
@@ -92,10 +105,58 @@ def _assemble_chat_context() -> str | None:
     return "\n\n".join(parts) if parts else None
 
 
+def _validate_clarification_response(raw) -> dict | None:
+    """Validate and normalize a clarification_response payload.
+    Returns a clean dict or None if absent/malformed."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        _log.warning("clarification_response is not a dict, ignoring: %r", type(raw).__name__)
+        return None
+    pid = raw.get("pending_request_id")
+    cid = raw.get("chosen_option_id")
+    if not isinstance(pid, str) or not pid.strip():
+        _log.warning("clarification_response missing valid pending_request_id, ignoring")
+        return None
+    if not isinstance(cid, str) or not cid.strip():
+        _log.warning("clarification_response missing valid chosen_option_id, ignoring")
+        return None
+    return {"pending_request_id": pid.strip(), "chosen_option_id": cid.strip()}
+
+
+def _validate_chat_body(body: dict) -> tuple:
+    """Validate and normalize POST /api/v1/chat body.
+    Returns (message, history, cart, clarification_response, error_str|None)."""
+    message = body.get("message", "")
+    if not isinstance(message, str):
+        return "", [], [], None, "message must be a string"
+    message = message.strip()
+
+    history = body.get("history", [])
+    if not isinstance(history, list):
+        _log.warning("history is not a list, discarding")
+        history = []
+    history = [
+        h for h in history
+        if isinstance(h, dict)
+        and isinstance(h.get("role"), str)
+        and isinstance(h.get("content"), str)
+    ]
+
+    cart = body.get("cart", [])
+    if not isinstance(cart, list):
+        _log.warning("cart is not a list, discarding")
+        cart = []
+    cart = [c for c in cart if isinstance(c, dict) and c.get("product_id")]
+
+    clarification_response = _validate_clarification_response(body.get("clarification_response"))
+    return message, history, cart, clarification_response, None
+
+
 def envelope(data=None, error=None, request_id=None):
     return {
         "ok": error is None,
-        "data": data or {},
+        "data": data if data is not None else {},
         "error": error,
         "request_id": request_id or str(uuid.uuid4()),
     }
@@ -103,17 +164,19 @@ def envelope(data=None, error=None, request_id=None):
 
 class RequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        # Suppress default access log noise; add structured logging here if needed
-        pass
+        _log.info("%s %s", self.command, self.path)
 
     def send_json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self._cors_headers()
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client disconnected — nothing to do
 
     def _cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -170,29 +233,31 @@ class RequestHandler(BaseHTTPRequestHandler):
                 products = json.load(f)
             self.send_json(envelope(data={"products": products, "total": len(products)}))
         except Exception as e:
+            _log.error("catalog error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_chat(self, body: dict):
+        req_id = str(uuid.uuid4())
+        message, history, cart, clarification_response, err = _validate_chat_body(body)
+        if err:
+            _log.warning("chat [%s] bad request: %s", req_id, err)
+            self.send_json(envelope(error=err, request_id=req_id), 400)
+            return
         try:
             from backend.chat_agent_agentic import handle_chat
-            session_token = self.headers.get("X-Session-Token")
-            if body.get("clarification_response") and not session_token:
-                raise ClarificationStateError(
-                    "Falta X-Session-Token para resolver la aclaración. Probá de nuevo."
-                )
+            _log.info("chat [%s] message=%r clarification=%s", req_id, message[:60], clarification_response is not None)
             result = handle_chat(
-                message=body.get("message", ""),
-                history=body.get("history", []),
-                cart=body.get("cart", []),
-                clarification_response=body.get("clarification_response"),
-                session_token=session_token,
+                message=message,
+                history=history,
+                cart=cart,
+                clarification_response=clarification_response,
                 context=_assemble_chat_context(),
             )
-            self.send_json(envelope(data=result))
-        except ClarificationStateError as e:
-            self.send_json(envelope(error=str(e)), 400)
+            _log.info("chat [%s] ok cart_items=%d clarification=%s", req_id, len(result.get("cart") or []), result.get("clarification") is not None)
+            self.send_json(envelope(data=result, request_id=req_id))
         except Exception as e:
-            self.send_json(envelope(error=str(e)), 500)
+            _log.error("chat [%s] error: %s", req_id, e, exc_info=True)
+            self.send_json(envelope(error=str(e), request_id=req_id), 500)
 
     def _handle_auth_register(self, body: dict):
         # TODO (Nacho): implement registration with SQLite
@@ -211,23 +276,30 @@ class RequestHandler(BaseHTTPRequestHandler):
                 ).fetchall()
             finally:
                 conn.close()
-            orders = [
-                {
+            orders = []
+            for r in rows:
+                try:
+                    items = json.loads(r["cart_json"])
+                except Exception:
+                    items = []
+                orders.append({
                     "id": r["id"],
-                    "items": json.loads(r["cart_json"]),
+                    "items": items,
                     "total": r["total"],
                     "created_at": r["created_at"],
-                }
-                for r in rows
-            ]
+                })
             self.send_json(envelope(data={"orders": orders}))
         except Exception as e:
+            _log.error("orders GET error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_orders_post(self, body: dict):
+        cart = body.get("cart", [])
+        if not isinstance(cart, list):
+            self.send_json(envelope(error="cart must be a list"), 400)
+            return
         try:
             catalog = _load_catalog()
-            cart = body.get("cart", [])
             validated = _validate_order_cart(cart, catalog)
             total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
             order_id = str(uuid.uuid4())[:8]
@@ -240,8 +312,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 conn.commit()
             finally:
                 conn.close()
+            _log.info("order [%s] placed items=%d total=%.2f", order_id, len(validated), total)
             self.send_json(envelope(data={"order_id": order_id, "total": total}))
         except Exception as e:
+            _log.error("orders POST error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_preferences_get(self):
@@ -309,8 +383,14 @@ class RequestHandler(BaseHTTPRequestHandler):
     # ─── Helpers ─────────────────────────────────────────────────────────────
 
     def _read_body(self) -> dict:
-        length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            return {}
+        if length <= 0:
+            return {}
+        if length > 1_000_000:  # 1 MB hard cap
+            _log.warning("request body too large (%d bytes), rejecting", length)
             return {}
         try:
             return json.loads(self.rfile.read(length))
