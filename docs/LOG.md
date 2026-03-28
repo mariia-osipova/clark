@@ -2,6 +2,14 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Jeremias — Agent weakness fixes landed and chat contract documented
+
+**Type:** api
+
+Hardened `chat_agent_agentic.py` and `app.py` after the agent weakness review: clarification tool calls now halt immediately and carry a grounded `pending_request_id`, cart validation reports dropped items, history trimming is char-budget based, and the graph/catalog are cached between requests with timeout + recursion guards. `docs/api.md` now documents `clarification_response`, `clarification`, and `missing_items`, and `_serve_static()` blocks path traversal attempts.
+
+---
+
 ## 2026-03-27 — Nacho — VERSION2: preferences persistence + chat context assembly
 
 **Type:** feature

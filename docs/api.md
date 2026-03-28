@@ -37,7 +37,7 @@ Returns the normalized product catalog.
 
 ## POST /api/v1/chat
 
-Send a chat message. Returns assistant reply and (from V1) authoritative cart state.
+Send a chat message. Returns assistant reply, authoritative cart state, clarification metadata when needed, and missing ingredient tracking.
 
 **Request body:**
 ```json
@@ -46,15 +46,23 @@ Send a chat message. Returns assistant reply and (from V1) authoritative cart st
   "history": [
     { "role": "user|assistant", "content": "string" }
   ],
-  "cart": []
+  "cart": [],
+  "clarification_response": {
+    "pending_request_id": "string",
+    "chosen_option_id": "string"
+  }
 }
 ```
+
+`clarification_response` is optional and should only be sent when the user is answering a previously returned clarification prompt.
 
 **Response `data`:**
 ```json
 {
   "reply": "string",
-  "cart": []
+  "cart": [],
+  "clarification": null,
+  "missing_items": []
 }
 ```
 
@@ -75,15 +83,22 @@ Send a chat message. Returns assistant reply and (from V1) authoritative cart st
 ```json
 {
   "reply": "string",
+  "cart": null,
   "clarification": {
     "question": "string",
     "options": [
       { "id": "string", "label": "string", "product": { } }
     ],
     "pending_request_id": "string"
-  }
+  },
+  "missing_items": []
 }
 ```
+
+Notes:
+- When `clarification` is present, `reply` mirrors the clarification question so the chat transcript stays readable.
+- `missing_items` contains normalized ingredient/product names the agent could not find while decomposing a recipe or broad shopping goal.
+- Server-side history is trimmed by character budget before calling the model; clients can still send full local history.
 
 ---
 

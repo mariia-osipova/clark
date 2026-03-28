@@ -17,6 +17,7 @@ import sys
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import MagicMock
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -353,3 +354,54 @@ class TestAssembleChatContext:
         os.environ["DB_PATH"] = str(tmp_path / "nonexistent.db")
         result = _assemble_chat_context()
         assert result is None
+
+
+class TestServeStaticSecurity:
+    """Path traversal protection for _serve_static."""
+
+    def _make_handler(self):
+        from backend.app import RequestHandler
+
+        handler = RequestHandler.__new__(RequestHandler)
+        handler.server = MagicMock()
+        handler.client_address = ("127.0.0.1", 9999)
+        handler.requestline = "GET / HTTP/1.1"
+        handler.request_version = "HTTP/1.1"
+        handler.command = "GET"
+        handler.headers = MagicMock()
+        handler._headers_buf = []
+        handler.wfile = MagicMock()
+        handler.rfile = MagicMock()
+        return handler
+
+    def test_path_traversal_returns_403(self):
+        handler = self._make_handler()
+        responses = []
+        handler.send_response = lambda code: responses.append(code)
+        handler.end_headers = MagicMock()
+        handler.send_header = MagicMock()
+
+        handler._serve_static("/../backend/chat_agent_agentic.py")
+
+        assert 403 in responses
+
+    def test_normal_path_is_not_blocked(self, tmp_path):
+        import backend.app as app_module
+
+        fake_frontend = tmp_path / "frontend"
+        fake_frontend.mkdir()
+        (fake_frontend / "index.html").write_bytes(b"<html></html>")
+
+        handler = self._make_handler()
+        responses = []
+        handler.send_response = lambda code: responses.append(code)
+        handler.end_headers = MagicMock()
+        handler.send_header = MagicMock()
+        handler.wfile = MagicMock()
+
+        from unittest.mock import patch
+
+        with patch.object(app_module, "ROOT", tmp_path):
+            handler._serve_static("/index.html")
+
+        assert 200 in responses

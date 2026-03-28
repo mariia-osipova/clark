@@ -31,11 +31,32 @@ ROOT = Path(__file__).resolve().parent.parent
 CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
 
 
+# ─── Singleton cache ─────────────────────────────────────────────────────────
+
+_app_cache: tuple[Any, list[dict], str] | None = None
+_MAX_HISTORY_CHARS = 40_000
+
+
+def _get_or_build_app(api_key: str):
+    """Return the compiled graph and catalog, caching both per API key."""
+    global _app_cache
+    if _app_cache is None or _app_cache[2] != api_key:
+        catalog = _load_catalog()
+        app = _build_graph(catalog, api_key)
+        _app_cache = (app, catalog, api_key)
+    return _app_cache[0], _app_cache[1]
+
+
+def _reset_app_cache() -> None:
+    """Invalidate the module-level graph/catalog cache."""
+    global _app_cache
+    _app_cache = None
+
+
 # ─── State ────────────────────────────────────────────────────────────────────
 
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
-    catalog: list[dict]          # passed through, never mutated by nodes
     result_cart: list[dict] | None
     clarification: dict | None
     missing_items: list[str]     # ingredients/products the agent couldn't find
@@ -63,6 +84,12 @@ Cuando el usuario pida una receta, un menú semanal, o una meta amplia (ej: "qui
    c. Si no encontrás nada útil → llamá a report_missing con el nombre del ingrediente.
 4. Al final, llamá a set_cart UNA SOLA VEZ con todos los ítems juntos (previos + nuevos).
 5. Respondé con un resumen estructurado (ver formato abajo).
+
+## Cuándo usar request_clarification
+Usá request_clarification ANTES de agregar al carrito cuando el pedido del usuario sea ambiguo
+y haya dos o más opciones razonables (ej: "leche" puede ser entera o descremada, "fideos" puede
+ser varias marcas o formatos). Pasá las opciones encontradas y preguntá al usuario cuál prefiere.
+No la uses si hay un match claro o si el usuario ya especificó marca, variedad o tamaño.
 
 ## Formato de respuesta para multi-producto
 Terminá siempre con un resumen en tres secciones (omití las secciones vacías):
@@ -102,25 +129,64 @@ def _catalog_summary(catalog: list[dict], max_items: int = 50) -> str:
     return "\n".join(lines)
 
 
+def _build_cart_item(product: dict, quantity: Any) -> dict:
+    return {
+        "product_id": product["id"],
+        "name": product["name"],
+        "brand": product.get("brand", ""),
+        "package_size": product.get("package_size", ""),
+        "price": product["price"],
+        "quantity": max(1, int(quantity)),
+        "image_url": product.get("image_url", ""),
+    }
+
+
 def _validate_cart(items: list[dict], catalog: list[dict]) -> list[dict]:
     """Validate cart items against the catalog. Remove unknown or out-of-stock items."""
     catalog_by_id = {p["id"]: p for p in catalog}
-    valid = []
+    valid: list[dict] = []
     for item in items:
         pid = item.get("product_id")
         if pid and pid in catalog_by_id:
             p = catalog_by_id[pid]
             if p.get("available_quantity", 1) > 0:
-                valid.append({
-                    "product_id": pid,
-                    "name": p["name"],
-                    "brand": p.get("brand", ""),
-                    "package_size": p.get("package_size", ""),
-                    "price": p["price"],
-                    "quantity": max(1, int(item.get("quantity", 1))),
-                    "image_url": p.get("image_url", ""),
-                })
+                valid.append(_build_cart_item(p, item.get("quantity", 1)))
     return valid
+
+
+def _validate_cart_with_report(
+    items: list[dict], catalog: list[dict]
+) -> tuple[list[dict], list[dict]]:
+    """Return the validated cart alongside dropped items and the reason."""
+    catalog_by_id = {p["id"]: p for p in catalog}
+    valid: list[dict] = []
+    dropped: list[dict] = []
+
+    for item in items:
+        pid = item.get("product_id")
+        product = catalog_by_id.get(pid)
+        if not pid or not product:
+            dropped.append({"product_id": pid or "(missing)", "reason": "unknown product"})
+            continue
+        if product.get("available_quantity", 1) <= 0:
+            dropped.append({"product_id": pid, "reason": "out of stock"})
+            continue
+        valid.append(_build_cart_item(product, item.get("quantity", 1)))
+
+    return valid, dropped
+
+
+def _trim_history(history: list[dict]) -> list[dict]:
+    """Return the newest history entries that fit within the character budget."""
+    trimmed: list[dict] = []
+    chars = 0
+    for message in reversed(history):
+        content_len = len(str(message.get("content", "")))
+        if chars + content_len > _MAX_HISTORY_CHARS:
+            break
+        trimmed.insert(0, message)
+        chars += content_len
+    return trimmed
 
 
 # ─── Tool implementations ─────────────────────────────────────────────────────
@@ -142,14 +208,20 @@ def _make_tools(catalog: list[dict]):
         """Replace the entire cart with the given items.
         Each item must have product_id (from search_products results) and quantity.
         Call this after every cart mutation. Returns the validated cart as JSON."""
-        validated = _validate_cart(items, catalog)
-        return json.dumps({"cart": validated, "count": len(validated)})
+        validated, dropped = _validate_cart_with_report(items, catalog)
+        return json.dumps({"cart": validated, "count": len(validated), "dropped": dropped})
 
     @tool
     def request_clarification(question: str, options: list[dict]) -> str:
         """Ask the user to choose between ambiguous product options before proceeding.
-        Returns acknowledgement."""
-        return json.dumps({"acknowledged": True})
+        Returns acknowledgement and the pending request id."""
+        pending_id = str(uuid.uuid4())
+        return json.dumps({
+            "acknowledged": True,
+            "pending_request_id": pending_id,
+            "question": question,
+            "options": options,
+        })
 
     @tool
     def report_missing(ingredient: str) -> str:
@@ -170,6 +242,7 @@ def _build_graph(catalog: list[dict], api_key: str):
         model="gpt-4o-mini",
         temperature=0,
         api_key=api_key,
+        timeout=30,
     ).bind_tools(tools)
 
     tools_by_name = {t.name: t for t in tools}
@@ -189,8 +262,8 @@ def _build_graph(catalog: list[dict], api_key: str):
             tool_fn = tools_by_name[tc["name"]]
             try:
                 result = tool_fn.invoke(tc["args"])
-            except Exception as exc:
-                result = json.dumps({"error": str(exc)})
+            except Exception:
+                result = json.dumps({"error": "tool execution failed"})
             new_messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
 
             # Capture side effects
@@ -198,14 +271,14 @@ def _build_graph(catalog: list[dict], api_key: str):
                 parsed = json.loads(result)
                 result_cart = parsed.get("cart")
             elif tc["name"] == "request_clarification":
-                args = tc["args"]
+                parsed = json.loads(result)
                 clarification = {
-                    "question": args.get("question", "¿Cuál preferís?"),
-                    "options": args.get("options", []),
-                    "pending_request_id": str(uuid.uuid4()),
+                    "question": parsed.get("question", tc["args"].get("question", "¿Cuál preferís?")),
+                    "options": parsed.get("options", tc["args"].get("options", [])),
+                    "pending_request_id": parsed.get("pending_request_id"),
                 }
             elif tc["name"] == "report_missing":
-                ingredient = tc["args"].get("ingredient", "")
+                ingredient = tc["args"].get("ingredient", "").strip().lower()
                 if ingredient and ingredient not in missing_items:
                     missing_items.append(ingredient)
 
@@ -222,12 +295,17 @@ def _build_graph(catalog: list[dict], api_key: str):
             return "tools"
         return END
 
+    def after_tools(state: AgentState) -> str:
+        if state.get("clarification"):
+            return END
+        return "agent"
+
     graph = StateGraph(AgentState)
     graph.add_node("agent", agent_node)
     graph.add_node("tools", tools_node)
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", should_continue)
-    graph.add_edge("tools", "agent")
+    graph.add_conditional_edges("tools", after_tools)
 
     return graph.compile()
 
@@ -251,8 +329,7 @@ def handle_chat(
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY environment variable is not set.")
-    catalog = _load_catalog()
-    app = _build_graph(catalog, api_key)
+    app, _catalog = _get_or_build_app(api_key)
 
     # Build initial message list
     init_messages: list = [SystemMessage(content=_build_system_prompt())]
@@ -275,7 +352,7 @@ def handle_chat(
             )
         ))
 
-    for msg in history[-20:]:
+    for msg in _trim_history(history):
         if msg["role"] == "user":
             init_messages.append(HumanMessage(content=msg["content"]))
         elif msg["role"] == "assistant":
@@ -283,20 +360,28 @@ def handle_chat(
 
     init_messages.append(HumanMessage(content=message))
 
-    final_state = app.invoke({
-        "messages": init_messages,
-        "catalog": catalog,
-        "result_cart": None,
-        "clarification": None,
-        "missing_items": [],
-    })
+    final_state = app.invoke(
+        {
+            "messages": init_messages,
+            "result_cart": None,
+            "clarification": None,
+            "missing_items": [],
+        },
+        config={"recursion_limit": 30},
+    )
 
     last_msg = final_state["messages"][-1]
-    reply = last_msg.content if isinstance(last_msg, AIMessage) and last_msg.content else "Lo siento, no pude completar la acción."
+    clarification = final_state.get("clarification")
+    if isinstance(last_msg, AIMessage) and last_msg.content:
+        reply = last_msg.content
+    elif clarification:
+        reply = clarification.get("question", "Necesito una aclaración para continuar.")
+    else:
+        reply = "Lo siento, no pude completar la acción."
 
     return {
         "reply": reply,
         "cart": final_state.get("result_cart"),
-        "clarification": final_state.get("clarification"),
+        "clarification": clarification,
         "missing_items": final_state.get("missing_items") or [],
     }
