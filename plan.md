@@ -240,22 +240,33 @@ When the assistant is unsure between several materially different options, it do
 ### Concrete deliverable
 A user can configure a recurring monthly shopping profile and generate a monthly cart automatically from saved preferences, order history, must-have items, budget constraints, and current offers. The main outcome is not background scheduling; the main outcome is one-click monthly cart generation with stored configuration.
 
+### Architecture shift: deterministic tool layer
+
+The agent currently makes every product decision (is this ambiguous? which to pick? how many? substitute or report?) through prompt instructions the LLM must follow. V4 moves those decisions into the tools so the LLM only orchestrates.
+
+```
+Current:  user → LLM (judges + decides) → tools (execute)
+V4:       user → LLM (decomposes intent) → tools (decide + execute) → LLM (routes on verdict)
+```
+
 ### Technical scope
 - Add a new monthly-buys tab with persistent configuration.
 - Store recurring shopping inputs in SQLite: household size, monthly budget, priority items, preferred brands, strict-brand flag, excluded categories, and free-text notes.
-- Build a monthly cart generation flow that merges the recurring config with prior orders and current catalog availability.
-- Let the agent optimize the recurring basket for stock and offers while preserving must-have items and user preferences.
+- Build a monthly cart generation flow that merges the recurring config with prior orders and current catalog availability using rule-based logic — not LLM reasoning.
+- Server-side cart accumulation: the agent calls `add_to_cart(product_id, quantity)` per item instead of maintaining the full cart list in its context window.
 - Preview the generated basket before save, including what was repeated, swapped, skipped, or newly suggested.
 
 ### Jeremias
-- Design the monthly planning prompt and automation logic.
-- Make the agent combine fixed requirements with historical buying patterns.
+- Swap `search_products` tool for `resolve_product` + `add_to_cart` in the agent graph once Juan and Nacho deliver those.
+- System prompt simplifies to ~4 routing rules: if `resolved` → add_to_cart; if `needs_clarification` → request_clarification; if `not_found` → report_missing.
+- Add monthly basket graph node: calls `POST /api/v1/recurring-plan/generate`, presents result, handles user overrides.
 - Make recurring generation reproducible enough that the team can review and trust the output live.
 
 ### Juan
-- Use order history and offers data to rank monthly basket candidates.
-- Improve bundle-level reasoning so the monthly cart is coherent, not just item-by-item greedy.
-- Create eval cases for monthly restock, budget pressure, and missing essentials.
+- `resolve_product(query, quantity, catalog)` in `product_semantic_index.py`: wraps `search()` → `build_clarification_candidates()` → `find_alternatives()` into a single verdict (`resolved` / `needs_clarification` / `not_found`). Eliminates ambiguity judgment, product selection, and substitute-vs-report decisions from the LLM.
+- `parse_quantity(message)` utility: regex + Spanish word-number map ("dos" → 2, "3 botellas" → 3, never confuses "1L" size with quantity).
+- `generate_monthly_basket_candidates(prefs, order_history, catalog, budget)`: rule-based algorithm. Pulls must-haves from preferences, counts frequency across order history, resolves each via `resolve_product()`, fills remaining budget with high-discount items. Returns candidates tagged `must_have` / `recurring` / `offer` / `suggested`. LLM presents the result — it does not compute it.
+- Eval cases for monthly restock, budget pressure, and missing essentials.
 
 ### Mariia
 - Design the monthly config tab and make it feel like a product, not an admin form.
@@ -263,8 +274,10 @@ A user can configure a recurring monthly shopping profile and generate a monthly
 - Make approval, override, and re-run flows extremely clear.
 
 ### Nacho
-- Create the SQLite tables and API endpoints for recurring plans and plan items.
-- Guarantee config persistence, retrieval, and safe generation under real app sessions.
+- `session_carts` SQLite table + `add_to_cart` / `remove_from_cart` / `get_cart` endpoints: server-side cart state so the agent never needs to track or merge the cart list across turns.
+- `recurring_plans` and `recurring_plan_items` SQLite tables with full CRUD endpoints.
+- `POST /api/v1/recurring-plan/generate` → calls Juan's `generate_monthly_basket_candidates()`, returns proposed cart.
+- `POST /api/v1/recurring-plan/accept` → saves proposed basket as a new order.
 - Own the final integration path from recurring config to generated cart to saved order.
 
 ### Unite gate
