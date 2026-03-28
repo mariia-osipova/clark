@@ -37,6 +37,9 @@ def init_db() -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
+        # WAL mode: readers don't block writers, writers don't block readers.
+        # Required for ThreadingHTTPServer where concurrent cart + chat writes are normal.
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS users (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,6 +194,31 @@ def clear_session_cart(session_id: str) -> None:
     try:
         conn.execute("BEGIN EXCLUSIVE")
         conn.execute("DELETE FROM session_carts WHERE session_id = ?", (session_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def place_order(session_id: str, order_id: str, cart: list, total: float) -> None:
+    """Insert order and clear session cart atomically in a single transaction.
+    If either operation fails the whole thing rolls back — no orphaned orders
+    or carts that survive checkout.
+    """
+    conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN EXCLUSIVE")
+        conn.execute(
+            "INSERT INTO orders (id, cart_json, total) VALUES (?, ?, ?)",
+            (order_id, json.dumps(cart), total),
+        )
+        conn.execute(
+            "DELETE FROM session_carts WHERE session_id = ?",
+            (session_id,),
+        )
         conn.commit()
     except Exception:
         conn.rollback()

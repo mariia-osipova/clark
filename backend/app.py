@@ -19,7 +19,7 @@ from backend.db import (
     get_session_cart,
     upsert_session_cart_item,
     remove_session_cart_item,
-    clear_session_cart,
+    place_order,
     save_pending_clarification,
     resolve_pending_clarification,
 )
@@ -304,10 +304,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             action=action or None,
         )
 
-    def _build_chat_response(self, result: dict, session_id: str, dropped_items: list) -> dict:
-        """Hydrate server cart, add dropped_items, return final data dict."""
+    def _build_chat_response(self, result: dict, session_id: str, dropped_items: list, catalog: list) -> dict:
+        """Hydrate server cart, add dropped_items, return final data dict.
+        Catalog is passed in to avoid a second disk read (already loaded by the caller).
+        """
         if result.get("cart") is not None:
-            catalog = _load_catalog()
             server_cart = get_session_cart(session_id, catalog) if session_id else result["cart"]
             result["cart"] = server_cart
         result["dropped_items"] = dropped_items
@@ -321,7 +322,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_json(envelope(error=err, request_id=req_id), 400)
             return
 
-        # Validate incoming cart; surface dropped items to frontend
+        # Load catalog once — reused for cart validation and response hydration
         catalog = _load_catalog()
         _, dropped_items = _validate_order_cart(cart, catalog)
 
@@ -347,7 +348,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     options=[o.get("id", "") for o in (clarification.get("options") or [])],
                 )
 
-            data = self._build_chat_response(result, session_id, dropped_items)
+            data = self._build_chat_response(result, session_id, dropped_items, catalog)
             _log.info("chat [%s] ok cart_items=%d clarification=%s dropped=%d",
                       req_id, len(data.get("cart") or []), data.get("clarification") is not None, len(dropped_items))
             self.send_json(envelope(data=data, request_id=req_id))
@@ -403,16 +404,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             total = round(sum(i["price"] * i["quantity"] for i in cart), 2)
             order_id = str(uuid.uuid4())[:8]
-            conn = get_db()
-            try:
-                conn.execute(
-                    "INSERT INTO orders (id, cart_json, total) VALUES (?, ?, ?)",
-                    (order_id, json.dumps(cart), total),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-            clear_session_cart(session_id)
+            place_order(session_id, order_id, cart, total)
             _log.info("order [%s] placed items=%d total=%.2f", order_id, len(cart), total)
             self.send_json(envelope(data={"order_id": order_id, "total": total}))
         except Exception as e:
