@@ -283,6 +283,51 @@ class TestHandleChat:
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
+    def test_clarification_response_injects_product_details(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        """When clarification_response resolves to a known product_id, the agent
+        receives product details (name, brand, size, price, product_id) and an
+        explicit set_cart instruction — no re-search needed."""
+        mock_load_catalog.return_value = sample_catalog
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="Listo, agregué la leche.")
+        mock_build_graph.return_value = mock_app
+
+        handle_chat(
+            "Leche entera La Serenísima",
+            [],
+            [],
+            clarification_response={"pending_request_id": "pending-1", "chosen_option_id": "p1"},
+        )
+
+        state = mock_app.invoke.call_args.args[0]
+        contents = [getattr(m, "content", "") for m in state["messages"]]
+        injected = next((c for c in contents if "product_id=p1" in c), None)
+        assert injected is not None, "Expected product details injected into messages"
+        assert "nombre=Leche entera La Serenísima" in injected
+        assert "set_cart" in injected
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_clarification_response_unknown_id_falls_back_gracefully(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        """Unknown chosen_option_id falls back to a plain message without crashing."""
+        mock_load_catalog.return_value = sample_catalog
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="ok")
+        mock_build_graph.return_value = mock_app
+
+        handle_chat(
+            "algo",
+            [],
+            [],
+            clarification_response={"pending_request_id": "pending-1", "chosen_option_id": "nonexistent"},
+        )
+
+        state = mock_app.invoke.call_args.args[0]
+        contents = [getattr(m, "content", "") for m in state["messages"]]
+        assert any("nonexistent" in c for c in contents)
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
     def test_openai_is_called_once_per_turn(self, mock_build_graph, mock_load_catalog, sample_catalog):
         mock_load_catalog.return_value = sample_catalog
         mock_app = MagicMock()

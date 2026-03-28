@@ -359,12 +359,28 @@ def handle_chat(
         init_messages.append(SystemMessage(content=context))
 
     if clarification_response:
-        init_messages.append(SystemMessage(
-            content=(
-                f"El usuario eligió la opción: {clarification_response.get('chosen_option_id')} "
-                f"para la solicitud pendiente: {clarification_response.get('pending_request_id')}"
+        chosen_id = clarification_response.get("chosen_option_id", "")
+        pending_id = clarification_response.get("pending_request_id", "")
+        product = next((p for p in _catalog if p.get("id") == chosen_id), None)
+        if product:
+            details = ", ".join(filter(None, [
+                f"nombre={product['name']}",
+                f"marca={product.get('brand', '')}",
+                f"tamaño={product.get('package_size', '')}",
+                f"precio=${float(product['price']):.2f}",
+                f"product_id={product['id']}",
+            ]))
+            clarification_context = (
+                f"El usuario eligió la opción para la solicitud pendiente {pending_id}. "
+                f"Detalles del producto elegido: {details}. "
+                "Llamá a set_cart directamente con este product_id. No vuelvas a buscar."
             )
-        ))
+        else:
+            clarification_context = (
+                f"El usuario eligió la opción: {chosen_id} "
+                f"para la solicitud pendiente: {pending_id}"
+            )
+        init_messages.append(SystemMessage(content=clarification_context))
 
     for msg in _trim_history(history):
         if msg["role"] == "user":
