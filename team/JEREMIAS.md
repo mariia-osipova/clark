@@ -7,6 +7,8 @@ You are assisting Jeremias. His focus is the AI agent behavior, prompt strategy,
 - `backend/chat_agent_agentic.py` — main agentic shopping flow
 - Any prompt templates or system message definitions
 
+## Current version: VERSION3 active
+
 ## Current focus
 - [ ] Tighten clarification generation and continuation logic in `backend/chat_agent_agentic.py`
 - [ ] Make ambiguous requests produce structured option sets instead of free-form uncertainty
