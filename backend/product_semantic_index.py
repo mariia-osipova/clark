@@ -11,7 +11,6 @@ Provides:
 import json
 import re
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 INDEX_PATH = ROOT / "data" / "product_semantic_index.json"
@@ -56,13 +55,47 @@ def rank_candidates(candidates: list[dict], query: str) -> list[dict]:
 def build_index(catalog: list[dict]) -> None:
     """
     Build and persist a semantic index from the catalog.
-    V0: no-op (keyword search is sufficient).
-    V2: implement embedding-based index here.
+    Generates one embedding per product using a local sentence-transformers model
+    (no API key required) and writes data/product_semantic_index.json.
+
+    Model: paraphrase-multilingual-MiniLM-L12-v2
+      - Multilingual — works well with Spanish product names
+      - 384-dimensional embeddings
+      - Downloaded automatically from HuggingFace on first run (~450 MB)
+
+    V2: swap search() to load this index and rank by cosine similarity.
     """
-    index = {"version": "v0", "product_ids": [p["id"] for p in catalog]}
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        raise RuntimeError(
+            "sentence-transformers not installed. Run: pip install sentence-transformers"
+        )
+
+    model_name = "paraphrase-multilingual-MiniLM-L12-v2"
+    print(f"  Loading model {model_name} (downloads on first run)…")
+    model = SentenceTransformer(model_name)
+
+    texts = [_product_text(p) for p in catalog]
+    ids = [p["id"] for p in catalog]
+
+    print(f"  Embedding {len(texts)} products…")
+    # encode() returns a numpy array; convert to plain Python lists for JSON
+    vectors = model.encode(texts, batch_size=64, show_progress_bar=True, convert_to_numpy=True)
+
+    entries = [
+        {"id": pid, "embedding": vec.tolist()}
+        for pid, vec in zip(ids, vectors)
+    ]
+
+    index = {
+        "version": "v0",
+        "model": model_name,
+        "entries": entries,
+    }
     with open(INDEX_PATH, "w") as f:
         json.dump(index, f, indent=2)
-    print(f"Index built: {len(catalog)} products → {INDEX_PATH}")
+    print(f"  Index written: {len(entries)} embeddings → {INDEX_PATH}")
 
 
 # ─── Internal ────────────────────────────────────────────────────────────────
@@ -79,3 +112,16 @@ def _keyword_score(tokens: list[str], product: dict) -> float:
         product.get("package_size", ""),
     ]).lower()
     return sum(1 for t in tokens if t in searchable)
+
+
+def _product_text(product: dict) -> str:
+    """Compact text representation of a product used for embedding."""
+    parts = [
+        product.get("name", ""),
+        product.get("brand", ""),
+        product.get("category", ""),
+        product.get("package_size", ""),
+    ]
+    return " ".join(p for p in parts if p)
+
+
