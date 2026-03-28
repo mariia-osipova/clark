@@ -7,15 +7,18 @@ You are assisting Mariia (also goes by Mari). Her focus is the layout system, ch
 - `frontend/styles.css` — visual system (layout, typography, spacing, cards)
 - `frontend/app.js` — vanilla JS state machine (tabs, cart rendering, chat thread, localStorage)
 
-## Current version: VERSION3 active
+## Current version: VERSION4 active
 
-## Current focus
-- [ ] Refine the clarification popup/modal so it feels fast and obvious, not disruptive
-- [ ] Show option cards with image, brand, size, price, and discount in a scannable layout
-- [ ] Polish the transition between chat reply, modal selection, and updated cart
+## V3 ✅
+- [x] Clarification popup renders image, brand, size, price per option
+- [x] Modal transition: chat reply → option selection → updated cart
+- [ ] Discount badge in clarification modal option cards (carried to V4 — not yet visible in modal)
 
-## Next focus
-- [ ] Prepare the monthly configuration tab and review flow after clarification UX is solid
+## Current focus (V4)
+- [ ] Add discount badge to clarification modal option cards (`opt.product?.discount_pct > 0 ? '${discount_pct}% OFF' : ''`)
+- [ ] Design and build the monthly configuration tab (household size, budget, priority items, preferred brands, excluded categories, notes)
+- [ ] Before/after preview: proposed monthly cart vs last saved plan or last order
+- [ ] Approval, override, and re-run flows — make them extremely clear and fast
 
 ## How to help Mariia
 - When she describes a layout or interaction, implement it in the appropriate frontend file.

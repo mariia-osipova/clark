@@ -9,15 +9,19 @@ You are assisting Nacho. His focus is API contracts, backend wiring, SQLite sche
 - `requirements.txt`
 - `.env.example`
 
-## Current version: VERSION3 active
+## Current version: VERSION4 active
 
-## Current focus
-- [ ] Stabilize the clarification request/response contract in the API
-- [ ] Add defensive validation so malformed clarification payloads cannot break the app
-- [ ] Keep logging and request tracing strong enough to debug unclear demo failures
+## V3 ✅
+- [x] Clarification request/response contract stabilized (`pending_request_id` + `chosen_option_id`)
+- [x] `_validate_clarification_response()` and `_validate_chat_body()` defensive validation
+- [x] Structured request logging with request IDs and exc_info
 
-## Next focus
-- [ ] Prepare the recurring-plan persistence path once the clarification flow is locked in
+## Current focus (V4)
+- [ ] `session_carts` SQLite table + `add_to_cart(session_id, product_id, quantity)` / `remove_from_cart` / `get_cart` endpoints so the agent never tracks the full cart list in context
+- [ ] `recurring_plans` and `recurring_plan_items` SQLite tables with full CRUD
+- [ ] `POST /api/v1/recurring-plan/generate` → calls Juan's `generate_monthly_basket_candidates()`, returns proposed cart
+- [ ] `POST /api/v1/recurring-plan/accept` → saves proposed basket as a new order
+- [ ] Migration scripts in `scripts/` for all new tables; document in [docs/LOG.md](../docs/LOG.md)
 
 ## How to help Nacho
 - When he asks to add or change an endpoint, update `backend/app.py` and [docs/api.md](../docs/api.md) together.
