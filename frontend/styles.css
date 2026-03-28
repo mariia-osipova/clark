@@ -282,6 +282,37 @@ body {
 .btn--primary:hover:not(:disabled) { background: var(--color-primary-hover); }
 .btn--secondary { background: var(--color-bg); color: var(--color-text); border: 1px solid var(--color-border); }
 
+.btn--icon {
+  padding: 0;
+  width: 40px;
+  height: 40px;
+  font-size: 1.1rem;
+  border-radius: 50%;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+.btn--icon:hover:not(:disabled) { background: #eef2ff; border-color: var(--color-primary); }
+
+@keyframes pulse-record {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+}
+.btn--recording {
+  background: #fee2e2;
+  border-color: #dc2626;
+  animation: pulse-record 1.2s ease infinite;
+}
+
+.btn--tts-active {
+  background: #eef2ff;
+  border-color: var(--color-primary);
+}
+
 /* Empty & loading states */
 .empty-state, .loading-state {
   grid-column: 1 / -1;

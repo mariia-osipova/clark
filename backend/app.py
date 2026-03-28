@@ -248,6 +248,12 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
+
+        # Binary upload — must not pass through _read_body()
+        if path == "/api/v1/transcribe":
+            self._handle_transcribe()
+            return
+
         body = self._read_body()
 
         if path == "/api/v1/chat":
@@ -670,6 +676,53 @@ class RequestHandler(BaseHTTPRequestHandler):
             _log.error("recurring plan accept error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
+    # ─── Audio transcription ──────────────────────────────────────────────────
+
+    def _handle_transcribe(self):
+        import os
+        import tempfile
+        content_type = self.headers.get("Content-Type", "audio/webm")
+        if "wav" in content_type:
+            ext = ".wav"
+        elif "mp4" in content_type or "m4a" in content_type:
+            ext = ".mp4"
+        elif "ogg" in content_type:
+            ext = ".ogg"
+        else:
+            ext = ".webm"
+
+        raw = self._read_raw_body(max_bytes=25_000_000)
+        if not raw:
+            self.send_json(envelope(error="audio body required (max 25 MB)"), 400)
+            return
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                f.write(raw)
+                tmp_path = f.name
+
+            from openai import OpenAI
+            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+            with open(tmp_path, "rb") as audio_file:
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    language="es",
+                )
+            text = transcript.text or ""
+            _log.info("transcribe: %r", text[:80])
+            self.send_json(envelope(data={"text": text}))
+        except Exception as e:
+            _log.error("transcribe error: %s", e, exc_info=True)
+            self.send_json(envelope(error=str(e)), 500)
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
     def _serve_static(self, path: str):
         if path == "/" or path == "":
             path = "/index.html"
@@ -704,6 +757,17 @@ class RequestHandler(BaseHTTPRequestHandler):
             pass
 
     # ─── Helpers ─────────────────────────────────────────────────────────────
+
+    def _read_raw_body(self, max_bytes: int = 25_000_000) -> bytes | None:
+        """Read raw binary request body up to max_bytes. Returns None on error or empty."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            return None
+        if length <= 0 or length > max_bytes:
+            _log.warning("raw body size %d out of accepted range (max %d)", length, max_bytes)
+            return None
+        return self.rfile.read(length)
 
     def _read_body(self) -> dict:
         try:

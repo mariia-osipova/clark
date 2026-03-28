@@ -13,6 +13,14 @@ const state = {
   clarification: null,
 };
 
+// ─── Audio state ──────────────────────────────────────────────────────────────
+const audioState = {
+  mediaRecorder: null,
+  chunks: [],
+  recording: false,
+  ttsEnabled: false,
+};
+
 // ─── Boot ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   bindTabs();
@@ -20,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindCartEvents();
   bindClarificationForm();
   bindModalCancel();
+  bindAudio();
   renderCart();
   loadCatalog();
 });
@@ -259,6 +268,7 @@ async function sendChat() {
 
     state.chatHistory.push({ role: 'assistant', content: reply });
     appendChatMsg('assistant', reply);
+    speak(reply);
 
     if (clarification) {
       showClarificationModal(clarification);
@@ -360,6 +370,7 @@ async function resolveClarification() {
     }
     state.chatHistory.push({ role: 'assistant', content: reply });
     appendChatMsg('assistant', reply);
+    speak(reply);
     if (clarification) {
       showClarificationModal(clarification);
     } else {
@@ -419,6 +430,107 @@ function bindClarificationForm() {
 function bindModalCancel() {
   document.getElementById('modal-cancel').addEventListener('click', closeClarificationModal);
   document.querySelector('.modal__overlay')?.addEventListener('click', closeClarificationModal);
+}
+
+// ─── Audio (STT + TTS) ────────────────────────────────────────────────────────
+function bindAudio() {
+  const micBtn = document.getElementById('btn-mic');
+  const ttsBtn = document.getElementById('btn-tts');
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    micBtn.disabled = true;
+    micBtn.title = 'Micrófono no disponible en este navegador';
+  } else {
+    micBtn.addEventListener('click', toggleRecording);
+  }
+
+  ttsBtn.addEventListener('click', toggleTts);
+}
+
+async function toggleRecording() {
+  if (audioState.recording) {
+    stopRecording();
+  } else {
+    await startRecording();
+  }
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioState.chunks = [];
+    audioState.mediaRecorder = new MediaRecorder(stream);
+    audioState.mediaRecorder.ondataavailable = e => {
+      if (e.data.size > 0) audioState.chunks.push(e.data);
+    };
+    audioState.mediaRecorder.onstop = () => {
+      const blob = new Blob(audioState.chunks, { type: 'audio/webm' });
+      stream.getTracks().forEach(t => t.stop());
+      transcribeAudio(blob);
+    };
+    audioState.mediaRecorder.start();
+    audioState.recording = true;
+    const btn = document.getElementById('btn-mic');
+    btn.classList.add('btn--recording');
+    btn.textContent = '⏹';
+    btn.title = 'Detener grabación';
+  } catch (err) {
+    appendChatMsg('assistant', `No se pudo acceder al micrófono: ${err.message}`);
+  }
+}
+
+function stopRecording() {
+  if (audioState.mediaRecorder && audioState.recording) {
+    audioState.mediaRecorder.stop();
+    audioState.recording = false;
+    const btn = document.getElementById('btn-mic');
+    btn.classList.remove('btn--recording');
+    btn.textContent = '🎤';
+    btn.title = 'Grabar mensaje de voz';
+  }
+}
+
+async function transcribeAudio(blob) {
+  const micBtn = document.getElementById('btn-mic');
+  micBtn.disabled = true;
+  micBtn.textContent = '⏳';
+  try {
+    const res = await fetch(`${API}/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'audio/webm', 'X-Session-Token': state.sessionToken },
+      body: blob,
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error);
+    const text = (json.data.text || '').trim();
+    if (text) {
+      document.getElementById('chat-input').value = text;
+      sendChat();
+    }
+  } catch (err) {
+    appendChatMsg('assistant', `Error al transcribir audio: ${err.message}`);
+  } finally {
+    micBtn.disabled = false;
+    micBtn.textContent = '🎤';
+  }
+}
+
+function toggleTts() {
+  audioState.ttsEnabled = !audioState.ttsEnabled;
+  const btn = document.getElementById('btn-tts');
+  btn.textContent = audioState.ttsEnabled ? '🔊' : '🔇';
+  btn.classList.toggle('btn--tts-active', audioState.ttsEnabled);
+  btn.title = audioState.ttsEnabled ? 'Desactivar texto a voz' : 'Activar texto a voz';
+  if (!audioState.ttsEnabled) speechSynthesis.cancel();
+}
+
+function speak(text) {
+  if (!audioState.ttsEnabled || !window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const utt = new SpeechSynthesisUtterance(text);
+  utt.lang = 'es-AR';
+  utt.rate = 1.0;
+  speechSynthesis.speak(utt);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
