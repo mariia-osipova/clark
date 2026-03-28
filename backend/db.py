@@ -3,12 +3,13 @@ SQLite helpers — schema init and connection factory.
 Owner: Nacho
 
 Tables:
-    users       — registered users
-    sessions    — session tokens linked to users
-
-Additional tables:
-    orders      — placed orders with cart snapshot and total
-    preferences — user preference blob (key/value, key='default' until auth lands)
+    users                — registered users
+    sessions             — session tokens linked to users
+    orders               — placed orders with cart snapshot and total
+    preferences          — user preference blob (key='default' until auth lands)
+    session_carts        — server-side per-session cart items
+    recurring_plans      — monthly shopping configuration (id='default' until auth lands)
+    recurring_plan_items — pinned items belonging to a recurring plan
 """
 
 import os
@@ -62,6 +63,35 @@ def init_db() -> None:
                 key        TEXT PRIMARY KEY,
                 prefs_json TEXT NOT NULL DEFAULT '{}',
                 updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS session_carts (
+                session_id TEXT    NOT NULL,
+                product_id TEXT    NOT NULL,
+                quantity   INTEGER NOT NULL DEFAULT 1,
+                added_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (session_id, product_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS recurring_plans (
+                id                  TEXT PRIMARY KEY,
+                household_size      INTEGER NOT NULL DEFAULT 1,
+                monthly_budget      REAL,
+                priority_items      TEXT    NOT NULL DEFAULT '[]',
+                preferred_brands    TEXT    NOT NULL DEFAULT '{}',
+                strict_brand        INTEGER NOT NULL DEFAULT 0,
+                excluded_categories TEXT    NOT NULL DEFAULT '[]',
+                notes               TEXT    NOT NULL DEFAULT '',
+                created_at          TEXT    NOT NULL DEFAULT (datetime('now')),
+                updated_at          TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS recurring_plan_items (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                plan_id    TEXT    NOT NULL REFERENCES recurring_plans(id) ON DELETE CASCADE,
+                product_id TEXT    NOT NULL,
+                quantity   INTEGER NOT NULL DEFAULT 1,
+                tag        TEXT    NOT NULL DEFAULT 'must_have'
             );
         """)
         conn.commit()

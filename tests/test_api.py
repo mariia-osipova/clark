@@ -613,3 +613,156 @@ class TestDefensiveValidation:
         result, status = _post(f"{test_server}/api/v1/chat", {"message": 999, "clarification_response": "garbage"})
         assert status == 400
         assert result["ok"] is False
+
+
+# ─── V4: session cart endpoints ───────────────────────────────────────────────
+
+class TestSessionCartEndpoints:
+    def test_get_empty_cart(self, test_server):
+        result = _get(f"{test_server}/api/v1/cart?session_id=sess-1")
+        assert result["ok"] is True
+        assert result["data"]["session_id"] == "sess-1"
+        assert result["data"]["items"] == []
+
+    def test_get_without_session_id_returns_400(self, test_server):
+        from urllib.error import HTTPError
+        try:
+            _get(f"{test_server}/api/v1/cart")
+            assert False, "expected error"
+        except HTTPError as e:
+            assert e.code == 400
+
+    def test_add_item_to_cart(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/cart", {
+            "session_id": "sess-2", "product_id": "p1", "quantity": 3
+        })
+        assert status == 200
+        assert result["ok"] is True
+        assert result["data"]["quantity"] == 3
+
+    def test_get_cart_after_add(self, test_server):
+        _post(f"{test_server}/api/v1/cart", {"session_id": "sess-3", "product_id": "p42", "quantity": 2})
+        result = _get(f"{test_server}/api/v1/cart?session_id=sess-3")
+        items = result["data"]["items"]
+        assert len(items) == 1
+        assert items[0]["product_id"] == "p42"
+        assert items[0]["quantity"] == 2
+
+    def test_add_updates_quantity_on_duplicate(self, test_server):
+        _post(f"{test_server}/api/v1/cart", {"session_id": "sess-4", "product_id": "p1", "quantity": 1})
+        _post(f"{test_server}/api/v1/cart", {"session_id": "sess-4", "product_id": "p1", "quantity": 5})
+        result = _get(f"{test_server}/api/v1/cart?session_id=sess-4")
+        assert result["data"]["items"][0]["quantity"] == 5
+
+    def test_remove_item_from_cart(self, test_server):
+        _post(f"{test_server}/api/v1/cart", {"session_id": "sess-5", "product_id": "p1", "quantity": 1})
+        result, status = _post(f"{test_server}/api/v1/cart/remove", {
+            "session_id": "sess-5", "product_id": "p1"
+        })
+        assert status == 200
+        assert result["data"]["removed"] is True
+        items = _get(f"{test_server}/api/v1/cart?session_id=sess-5")["data"]["items"]
+        assert items == []
+
+    def test_add_missing_session_id_returns_400(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/cart", {"product_id": "p1", "quantity": 1})
+        assert status == 400
+        assert result["ok"] is False
+
+    def test_add_missing_product_id_returns_400(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/cart", {"session_id": "sess-6", "quantity": 1})
+        assert status == 400
+        assert result["ok"] is False
+
+    def test_carts_are_isolated_by_session(self, test_server):
+        _post(f"{test_server}/api/v1/cart", {"session_id": "sess-a", "product_id": "p1", "quantity": 1})
+        _post(f"{test_server}/api/v1/cart", {"session_id": "sess-b", "product_id": "p2", "quantity": 2})
+        items_a = _get(f"{test_server}/api/v1/cart?session_id=sess-a")["data"]["items"]
+        items_b = _get(f"{test_server}/api/v1/cart?session_id=sess-b")["data"]["items"]
+        assert len(items_a) == 1 and items_a[0]["product_id"] == "p1"
+        assert len(items_b) == 1 and items_b[0]["product_id"] == "p2"
+
+
+# ─── V4: recurring plan endpoints ─────────────────────────────────────────────
+
+class TestRecurringPlanEndpoints:
+    def test_get_empty_plan(self, test_server):
+        result = _get(f"{test_server}/api/v1/recurring-plan")
+        assert result["ok"] is True
+        assert result["data"]["plan"] == {}
+
+    def test_save_and_retrieve_plan(self, test_server):
+        plan = {
+            "household_size": 3,
+            "monthly_budget": 50000.0,
+            "priority_items": ["p1", "p2"],
+            "preferred_brands": {"leche": "La Serenísima"},
+            "strict_brand": True,
+            "excluded_categories": ["alcohol"],
+            "notes": "sin tacc",
+        }
+        result, status = _post(f"{test_server}/api/v1/recurring-plan", {"plan": plan})
+        assert status == 200
+        assert result["ok"] is True
+        assert result["data"]["plan"]["household_size"] == 3
+        assert result["data"]["plan"]["monthly_budget"] == 50000.0
+        assert result["data"]["plan"]["priority_items"] == ["p1", "p2"]
+        assert result["data"]["plan"]["strict_brand"] is True
+
+    def test_get_plan_after_save(self, test_server):
+        _post(f"{test_server}/api/v1/recurring-plan", {"plan": {"household_size": 2, "notes": "vegano"}})
+        result = _get(f"{test_server}/api/v1/recurring-plan")
+        assert result["data"]["plan"]["household_size"] == 2
+        assert result["data"]["plan"]["notes"] == "vegano"
+
+    def test_upsert_updates_existing(self, test_server):
+        _post(f"{test_server}/api/v1/recurring-plan", {"plan": {"household_size": 2}})
+        _post(f"{test_server}/api/v1/recurring-plan", {"plan": {"household_size": 5}})
+        result = _get(f"{test_server}/api/v1/recurring-plan")
+        assert result["data"]["plan"]["household_size"] == 5
+
+    def test_non_dict_plan_returns_400(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/recurring-plan", {"plan": "bad"})
+        assert status == 400
+        assert result["ok"] is False
+
+
+# ─── V4: recurring plan generate / accept ─────────────────────────────────────
+
+class TestRecurringPlanGenerateAccept:
+    def test_generate_returns_proposed_cart(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/recurring-plan/generate", {})
+        assert status == 200
+        assert result["ok"] is True
+        assert "proposed_cart" in result["data"]
+        assert isinstance(result["data"]["proposed_cart"], list)
+
+    def test_generate_with_no_catalog_returns_empty_cart(self, test_server):
+        import backend.app as app_module
+        from unittest.mock import patch
+        with patch.object(app_module, "_load_catalog", return_value=[]):
+            result, status = _post(f"{test_server}/api/v1/recurring-plan/generate", {})
+        assert status == 200
+        assert result["data"]["proposed_cart"] == []
+
+    def test_accept_non_list_returns_400(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/recurring-plan/accept", {"proposed_cart": "bad"})
+        assert status == 400
+        assert result["ok"] is False
+
+    def test_accept_saves_as_order(self, test_server, sample_catalog):
+        import backend.app as app_module
+        from unittest.mock import patch
+        cart = [{"product_id": "p1", "quantity": 2}, {"product_id": "p2", "quantity": 1}]
+        with patch.object(app_module, "_load_catalog", return_value=sample_catalog):
+            result, status = _post(f"{test_server}/api/v1/recurring-plan/accept", {"proposed_cart": cart})
+        assert status == 200
+        assert result["ok"] is True
+        assert "order_id" in result["data"]
+        assert result["data"]["total"] == round(350.0 * 2 + 180.0 * 1, 2)
+
+    def test_accept_empty_cart_saves_zero_order(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/recurring-plan/accept", {"proposed_cart": []})
+        assert status == 200
+        assert result["data"]["total"] == 0.0
+        assert result["data"]["items"] == 0

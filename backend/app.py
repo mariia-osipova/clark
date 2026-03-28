@@ -12,7 +12,7 @@ import sys
 import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from backend.db import get_db
 
@@ -102,6 +102,35 @@ def _assemble_chat_context() -> str | None:
         pass  # context is best-effort, never block a chat turn
 
     return "\n\n".join(parts) if parts else None
+
+
+def _generate_basket_stub(plan: dict, order_history: list, catalog: list) -> list:
+    """Rule-based fallback when Juan's generate_monthly_basket_candidates is not yet available.
+    Returns must-have items from the plan followed by frequently-bought items from history."""
+    catalog_map = {p["id"]: p for p in catalog}
+    seen: set = set()
+    result = []
+
+    for pid in plan.get("priority_items", []):
+        if pid in catalog_map and pid not in seen:
+            result.append({"product_id": pid, "quantity": 1, "tag": "must_have"})
+            seen.add(pid)
+
+    freq: dict = {}
+    for order in order_history:
+        for item in order.get("items", []):
+            pid = item.get("product_id")
+            if pid:
+                freq[pid] = freq.get(pid, 0) + item.get("quantity", 1)
+
+    for pid, _ in sorted(freq.items(), key=lambda x: -x[1]):
+        if pid not in seen and pid in catalog_map:
+            result.append({"product_id": pid, "quantity": 1, "tag": "recurring"})
+            seen.add(pid)
+        if len(result) >= 20:
+            break
+
+    return result
 
 
 def _validate_clarification_response(raw) -> dict | None:
@@ -210,6 +239,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._handle_orders_get()
         elif path == "/api/v1/preferences":
             self._handle_preferences_get()
+        elif path == "/api/v1/cart":
+            self._handle_cart_get(parsed.query)
+        elif path == "/api/v1/recurring-plan":
+            self._handle_recurring_plan_get()
         elif path.startswith("/"):
             # Serve static frontend files
             self._serve_static(path)
@@ -231,6 +264,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._handle_orders_post(body)
         elif path == "/api/v1/preferences":
             self._handle_preferences_put(body)
+        elif path == "/api/v1/cart/remove":
+            self._handle_cart_remove(body)
+        elif path == "/api/v1/cart":
+            self._handle_cart_add(body)
+        elif path == "/api/v1/recurring-plan/generate":
+            self._handle_recurring_plan_generate()
+        elif path == "/api/v1/recurring-plan/accept":
+            self._handle_recurring_plan_accept(body)
+        elif path == "/api/v1/recurring-plan":
+            self._handle_recurring_plan_put(body)
         else:
             self.send_json(envelope(error="Not found"), 404)
 
@@ -366,6 +409,269 @@ class RequestHandler(BaseHTTPRequestHandler):
                 conn.close()
             self.send_json(envelope(data={"preferences": prefs}))
         except Exception as e:
+            self.send_json(envelope(error=str(e)), 500)
+
+    # ─── Session cart handlers ────────────────────────────────────────────────
+
+    def _handle_cart_get(self, query_string: str):
+        params = parse_qs(query_string)
+        session_id = (params.get("session_id") or [None])[0]
+        if not session_id:
+            self.send_json(envelope(error="session_id query param required"), 400)
+            return
+        try:
+            conn = get_db()
+            try:
+                rows = conn.execute(
+                    "SELECT product_id, quantity FROM session_carts WHERE session_id = ?",
+                    (session_id,),
+                ).fetchall()
+            finally:
+                conn.close()
+            items = [{"product_id": r["product_id"], "quantity": r["quantity"]} for r in rows]
+            self.send_json(envelope(data={"session_id": session_id, "items": items}))
+        except Exception as e:
+            _log.error("cart GET error: %s", e, exc_info=True)
+            self.send_json(envelope(error=str(e)), 500)
+
+    def _handle_cart_add(self, body: dict):
+        session_id = body.get("session_id", "")
+        product_id = body.get("product_id", "")
+        if not session_id or not product_id:
+            self.send_json(envelope(error="session_id and product_id required"), 400)
+            return
+        try:
+            qty = max(1, int(body.get("quantity", 1)))
+        except (ValueError, TypeError):
+            qty = 1
+        try:
+            conn = get_db()
+            try:
+                conn.execute(
+                    """INSERT INTO session_carts (session_id, product_id, quantity)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(session_id, product_id) DO UPDATE SET
+                           quantity = excluded.quantity""",
+                    (session_id, product_id, qty),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.send_json(envelope(data={"session_id": session_id, "product_id": product_id, "quantity": qty}))
+        except Exception as e:
+            _log.error("cart add error: %s", e, exc_info=True)
+            self.send_json(envelope(error=str(e)), 500)
+
+    def _handle_cart_remove(self, body: dict):
+        session_id = body.get("session_id", "")
+        product_id = body.get("product_id", "")
+        if not session_id or not product_id:
+            self.send_json(envelope(error="session_id and product_id required"), 400)
+            return
+        try:
+            conn = get_db()
+            try:
+                conn.execute(
+                    "DELETE FROM session_carts WHERE session_id = ? AND product_id = ?",
+                    (session_id, product_id),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.send_json(envelope(data={"removed": True}))
+        except Exception as e:
+            _log.error("cart remove error: %s", e, exc_info=True)
+            self.send_json(envelope(error=str(e)), 500)
+
+    # ─── Recurring plan handlers ──────────────────────────────────────────────
+
+    def _handle_recurring_plan_get(self):
+        try:
+            conn = get_db()
+            try:
+                row = conn.execute(
+                    "SELECT * FROM recurring_plans WHERE id='default'"
+                ).fetchone()
+            finally:
+                conn.close()
+            if row:
+                plan = {
+                    "household_size": row["household_size"],
+                    "monthly_budget": row["monthly_budget"],
+                    "priority_items": json.loads(row["priority_items"]),
+                    "preferred_brands": json.loads(row["preferred_brands"]),
+                    "strict_brand": bool(row["strict_brand"]),
+                    "excluded_categories": json.loads(row["excluded_categories"]),
+                    "notes": row["notes"],
+                    "updated_at": row["updated_at"],
+                }
+            else:
+                plan = {}
+            self.send_json(envelope(data={"plan": plan}))
+        except Exception as e:
+            _log.error("recurring plan GET error: %s", e, exc_info=True)
+            self.send_json(envelope(error=str(e)), 500)
+
+    def _handle_recurring_plan_put(self, body: dict):
+        plan = body.get("plan", {})
+        if not isinstance(plan, dict):
+            self.send_json(envelope(error="plan must be an object"), 400)
+            return
+        try:
+            household_size = max(1, int(plan.get("household_size", 1)))
+        except (ValueError, TypeError):
+            household_size = 1
+        try:
+            monthly_budget = float(plan["monthly_budget"]) if plan.get("monthly_budget") is not None else None
+        except (ValueError, TypeError):
+            monthly_budget = None
+        priority_items = plan.get("priority_items", [])
+        if not isinstance(priority_items, list):
+            priority_items = []
+        preferred_brands = plan.get("preferred_brands", {})
+        if not isinstance(preferred_brands, dict):
+            preferred_brands = {}
+        strict_brand = bool(plan.get("strict_brand", False))
+        excluded_categories = plan.get("excluded_categories", [])
+        if not isinstance(excluded_categories, list):
+            excluded_categories = []
+        notes = str(plan.get("notes", ""))
+        try:
+            conn = get_db()
+            try:
+                conn.execute(
+                    """INSERT INTO recurring_plans
+                           (id, household_size, monthly_budget, priority_items,
+                            preferred_brands, strict_brand, excluded_categories, notes, updated_at)
+                       VALUES ('default', ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+                       ON CONFLICT(id) DO UPDATE SET
+                           household_size      = excluded.household_size,
+                           monthly_budget      = excluded.monthly_budget,
+                           priority_items      = excluded.priority_items,
+                           preferred_brands    = excluded.preferred_brands,
+                           strict_brand        = excluded.strict_brand,
+                           excluded_categories = excluded.excluded_categories,
+                           notes               = excluded.notes,
+                           updated_at          = excluded.updated_at""",
+                    (household_size, monthly_budget, json.dumps(priority_items),
+                     json.dumps(preferred_brands), int(strict_brand),
+                     json.dumps(excluded_categories), notes),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.send_json(envelope(data={"plan": {
+                "household_size": household_size,
+                "monthly_budget": monthly_budget,
+                "priority_items": priority_items,
+                "preferred_brands": preferred_brands,
+                "strict_brand": strict_brand,
+                "excluded_categories": excluded_categories,
+                "notes": notes,
+            }}))
+        except Exception as e:
+            _log.error("recurring plan PUT error: %s", e, exc_info=True)
+            self.send_json(envelope(error=str(e)), 500)
+
+    def _handle_recurring_plan_generate(self):
+        try:
+            conn = get_db()
+            try:
+                plan_row = conn.execute(
+                    "SELECT * FROM recurring_plans WHERE id='default'"
+                ).fetchone()
+                order_rows = conn.execute(
+                    "SELECT cart_json, total, created_at FROM orders ORDER BY created_at DESC LIMIT 10"
+                ).fetchall()
+            finally:
+                conn.close()
+
+            plan: dict = {}
+            if plan_row:
+                plan = {
+                    "household_size": plan_row["household_size"],
+                    "monthly_budget": plan_row["monthly_budget"],
+                    "priority_items": json.loads(plan_row["priority_items"]),
+                    "preferred_brands": json.loads(plan_row["preferred_brands"]),
+                    "strict_brand": bool(plan_row["strict_brand"]),
+                    "excluded_categories": json.loads(plan_row["excluded_categories"]),
+                    "notes": plan_row["notes"],
+                }
+
+            order_history = []
+            for r in order_rows:
+                try:
+                    items = json.loads(r["cart_json"])
+                except Exception:
+                    items = []
+                order_history.append({"items": items, "total": r["total"], "created_at": r["created_at"]})
+
+            catalog = _load_catalog()
+
+            try:
+                from backend.product_semantic_index import generate_monthly_basket_candidates
+                candidates = generate_monthly_basket_candidates(
+                    prefs=plan,
+                    order_history=order_history,
+                    catalog=catalog,
+                    budget=plan.get("monthly_budget"),
+                )
+            except (ImportError, AttributeError):
+                # Juan's function not yet available — use rule-based stub
+                candidates = _generate_basket_stub(plan, order_history, catalog)
+
+            catalog_map = {p["id"]: p for p in catalog}
+            proposed_cart = []
+            for c in candidates:
+                pid = c.get("product_id") or c.get("id")
+                product = catalog_map.get(pid)
+                if not product or product.get("available_quantity", 0) == 0:
+                    continue
+                try:
+                    qty = max(1, int(c.get("quantity", 1)))
+                except (ValueError, TypeError):
+                    qty = 1
+                proposed_cart.append({
+                    "product_id": pid,
+                    "name": product.get("name", ""),
+                    "brand": product.get("brand", ""),
+                    "package_size": product.get("package_size", ""),
+                    "price": product.get("price", 0.0),
+                    "quantity": qty,
+                    "image_url": product.get("image_url", ""),
+                    "tag": c.get("tag", "suggested"),
+                })
+
+            total = round(sum(i["price"] * i["quantity"] for i in proposed_cart), 2)
+            _log.info("recurring-plan generate: %d items total=%.2f", len(proposed_cart), total)
+            self.send_json(envelope(data={"proposed_cart": proposed_cart, "total": total}))
+        except Exception as e:
+            _log.error("recurring plan generate error: %s", e, exc_info=True)
+            self.send_json(envelope(error=str(e)), 500)
+
+    def _handle_recurring_plan_accept(self, body: dict):
+        proposed_cart = body.get("proposed_cart", [])
+        if not isinstance(proposed_cart, list):
+            self.send_json(envelope(error="proposed_cart must be a list"), 400)
+            return
+        try:
+            catalog = _load_catalog()
+            validated = _validate_order_cart(proposed_cart, catalog)
+            total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
+            order_id = str(uuid.uuid4())[:8]
+            conn = get_db()
+            try:
+                conn.execute(
+                    "INSERT INTO orders (id, cart_json, total) VALUES (?, ?, ?)",
+                    (order_id, json.dumps(validated), total),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            _log.info("recurring plan accepted as order [%s] items=%d total=%.2f", order_id, len(validated), total)
+            self.send_json(envelope(data={"order_id": order_id, "total": total, "items": len(validated)}))
+        except Exception as e:
+            _log.error("recurring plan accept error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
     def _serve_static(self, path: str):

@@ -9,20 +9,41 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 - `data/catalog_snapshot.json` — normalized catalog source
 - `data/product_semantic_index.json` — semantic index
 
-## Current version: VERSION4 active
+## Current version: VERSION3 active
 
-### V3 ✅
-- [x] Extend `rank_candidates()` discount weight and tiered scoring (40%→+4, 20%→+2, 10%→+1)
-- [x] `build_clarification_candidates()`: brand mismatch, size delta >20%, price delta >15% triggers popup
-- [x] `_candidates_are_ambiguous()` deterministic ambiguity gate
-- [x] Clean up modal label: removed duplicate brand prefix
-- [x] V3 eval scenarios: `ambiguous_cola`, `ambiguous_brand`, `ambiguous_size`, `offers_ranking`
+### V0 ✅
+- [x] Implement the scraper/normalizer for catalog items (Carrefour public catalog)
+- [x] Standardize product fields: ID, name, brand, package size, price, image URL, available quantity
+- [x] Add a first-pass query filter by product name/brand
+- [x] Write output to `data/catalog_snapshot.json`
 
-### Current focus (V4)
-- [ ] `resolve_product(query, quantity, catalog)` in `product_semantic_index.py`: wraps `search()` → `build_clarification_candidates()` → `find_alternatives()` into a single verdict (`resolved` / `needs_clarification` / `not_found`)
-- [ ] `parse_quantity(message)`: regex + Spanish word-number map ("dos" → 2, "3 botellas" → 3, never confuses "1L" size with quantity)
-- [ ] `generate_monthly_basket_candidates(prefs, order_history, catalog, budget)`: rule-based, returns candidates tagged `must_have` / `recurring` / `offer` / `suggested`
-- [ ] Eval cases for monthly restock, budget pressure, and missing essentials
+### V1 ✅
+- [x] Product ranking for exact and near-exact matches (`rank_candidates()` with brand +5, size +5, discount boost)
+- [x] Unit normalisation (1L == 1000ml == 1 litro) via `_normalize_size()`
+- [x] Filter unavailable items before ranking output
+- [x] 22 unit tests in `tests/test_product_ranking.py`
+
+### V2 ✅
+- [x] Hybrid semantic search in `search()` using sentence-transformers; keyword fallback when index absent
+- [x] `find_alternatives(query, catalog, category, top_k)` for stock-aware substitution
+- [x] Module-level model and index caching (`_MODEL_CACHE`, `_INDEX_CACHE`)
+- [x] V2 eval scenarios: `v2_recipe_torta`, `v2_out_of_stock`, `v2_broad_query`, `v2_out_of_stock_substitution`
+- [x] LLM judge (gpt-4o-mini) for v2-tagged scenarios; `--no-llm-judge` flag for CI
+- [x] `min_cart_size` + `expected_min_quantity` fields on `Scenario` — v1 scenarios now validate cart
+- [x] `_cosine()` fixed to true cosine similarity (was returning raw dot product)
+- [x] Strict verdict parsing in `_llm_judge()`; API errors return FAIL not PASS
+- [x] 27 unit tests passing, 1 skipped (semantic broad query — requires sentence-transformers install)
+
+### V3 🔜
+- [ ] Extend `rank_candidates()` discount weight (current `* 0.01` is too small for offers-aware ranking)
+- [ ] Define "materially different" candidate sets for clarification (brand mismatch, size delta >20%, price delta >15%)
+- [ ] Expand evals for ambiguous cola, size conflicts, close-brand choices
+
+### V4 ⬜
+- [ ] `resolve_product(query, quantity, catalog)` in `product_semantic_index.py`: wraps `search()` → `build_clarification_candidates()` → `find_alternatives()` into a single verdict dict (`resolved` / `needs_clarification` / `not_found`). Eliminates ambiguity judgment and substitute-vs-report decisions from the LLM.
+- [ ] `parse_quantity(message)` utility: regex + Spanish word-number map ("dos" → 2, "3 botellas" → 3, never confuses "1L" size with quantity).
+- [ ] `generate_monthly_basket_candidates(prefs, order_history, catalog, budget)`: rule-based algorithm. Pulls must-haves from preferences, counts frequency across order history, resolves each via `resolve_product()`, fills remaining budget with high-discount items. Returns candidates tagged `must_have` / `recurring` / `offer` / `suggested`. LLM presents — does not compute.
+- [ ] Eval cases for monthly restock, budget pressure, and missing essentials.
 
 ## Version roadmap (Juan)
 | Version | Focus | Status |
@@ -30,8 +51,8 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 | V0 | Scraper, normalization, first-pass query filter | ✅ Done |
 | V1 | Product ranking for exact and near-exact matches, filter unavailable items, initial tests | ✅ Done |
 | V2 | Semantic retrieval in `product_semantic_index.py`, rank alternatives, expand eval suite | ✅ Done |
-| V3 | Discount-aware ranking, clarification candidate sets, eval scenarios | ✅ Done |
-| V4 | `resolve_product`, `parse_quantity`, `generate_monthly_basket_candidates` | 🔜 Active |
+| V3 | Extend ranking with discount/offer awareness, define clarification candidate sets | 🔜 Active |
+| V4 | `resolve_product`, `parse_quantity`, `generate_monthly_basket_candidates` — deterministic tool layer | ⬜ Upcoming |
 
 ## How to help Juan
 - When he asks to scrape or update the catalog, write output to `data/catalog_snapshot.json` with normalized fields.
@@ -58,5 +79,5 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 - Never hardcode prices or quantities — always pull from scrape.
 - Unavailable items (quantity 0) must be filtered before ranking output.
 - Eval scenarios must include at least: exact match, near-exact match, and unavailable item.
-- `find_alternatives()` is used internally by `resolve_product()` — Jeremias wires `resolve_product` into the agent for V4, not `find_alternatives` directly.
+- `find_alternatives()` is the substitution API — Jeremias wires it into the agent tool for V3.
 - Use `--no-llm-judge` when running evals in CI to avoid API dependency.

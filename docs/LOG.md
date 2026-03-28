@@ -2,11 +2,19 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Nacho — VERSION4: session carts + recurring plan persistence + generate/accept flow
+
+**Type:** feature
+
+Added `session_carts`, `recurring_plans`, and `recurring_plan_items` tables to `backend/db.py` and `scripts/migrate_v4_session_carts_and_plans.py`. Implemented `GET/POST /api/v1/cart` and `POST /api/v1/cart/remove` for server-side cart state keyed by session_id. Implemented `GET/POST /api/v1/recurring-plan` for monthly config persistence (upsert on id='default'). Implemented `POST /api/v1/recurring-plan/generate`: loads plan + order history + catalog, calls `generate_monthly_basket_candidates()` from product_semantic_index, falls back to rule-based stub (priority items + frequency-ranked history) if Juan's function is not yet available. Implemented `POST /api/v1/recurring-plan/accept`: validates proposed cart against catalog via `_validate_order_cart()` and saves as a new order. Updated `docs/api.md`. 168 tests passing.
+
+---
+
 ## 2026-03-28 — Jeremias — Fix: clarification selection no longer re-triggers search loop
 
 **Type:** bugfix
 
-Root cause: the frontend sends the selected option's label as the `message` field when resolving a clarification (e.g. "Carrefour Galletas crackers … 200 g"). The agent received this long product name as the new HumanMessage and treated it as a fresh search query, re-calling `search_products`, which re-triggered `build_clarification_candidates` and produced a second clarification popup — or reported the product as unavailable. Fix: in `handle_chat`, when `clarification_response` resolves to a known catalog product, the HumanMessage is replaced with the neutral string "Confirmado." so the agent focuses on the system-level injection ("Llamá a set_cart directamente con este product_id"). Added regression test `test_clarification_response_uses_neutral_message_not_label`. 48 agent tests passing.
+Root cause: the frontend sends the selected option's label as the `message` field when resolving a clarification (e.g. "Carrefour Galletas crackers … 200 g"). The agent received this long product name as the new HumanMessage and treated it as a fresh search query, re-calling `search_products`, which re-triggered `build_clarification_candidates` and produced a second clarification popup — or reported the product as unavailable. Fix: in `handle_chat`, when `clarification_response` resolves to a known catalog product, the HumanMessage is replaced with the neutral string "Confirmado." so the agent focuses on the system-level injection. Added regression test `test_clarification_response_uses_neutral_message_not_label`. 48 agent tests passing.
 
 ---
 

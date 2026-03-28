@@ -157,25 +157,72 @@ Save or replace user preferences.
 
 ---
 
-## POST /api/v1/monthly-plan (planned)
+---
 
-Save or update recurring monthly shopping configuration.
+## GET /api/v1/cart?session_id=\<id\>
 
-**Request:**
+Returns the server-side cart for a session.
+
+**Response data:** `{ "session_id": "string", "items": [ { "product_id": "string", "quantity": 1 } ] }`
+
+## POST /api/v1/cart
+
+Add or update an item in the server-side cart. Upserts on (session_id, product_id).
+
+**Request:** `{ "session_id": "string", "product_id": "string", "quantity": 1 }`
+**Response data:** `{ "session_id": "string", "product_id": "string", "quantity": 1 }`
+
+## POST /api/v1/cart/remove
+
+Remove an item from the server-side cart.
+
+**Request:** `{ "session_id": "string", "product_id": "string" }`
+**Response data:** `{ "removed": true }`
+
+---
+
+## GET /api/v1/recurring-plan
+
+Returns the saved recurring monthly shopping configuration (single default plan until auth lands).
+
+**Response data:** `{ "plan": { "household_size": 1, "monthly_budget": null, "priority_items": [], "preferred_brands": {}, "strict_brand": false, "excluded_categories": [], "notes": "", "updated_at": "iso8601" } }`
+
+Returns `{ "plan": {} }` if no plan has been saved yet.
+
+## POST /api/v1/recurring-plan
+
+Save or replace the recurring plan configuration.
+
+**Request:** `{ "plan": { "household_size": 2, "monthly_budget": 50000, "priority_items": ["p_id_1"], "preferred_brands": { "leche": "La Serenísima" }, "strict_brand": false, "excluded_categories": ["alcohol"], "notes": "string" } }`
+**Response data:** `{ "plan": { ...saved plan... } }`
+
+## POST /api/v1/recurring-plan/generate
+
+Generate a proposed monthly cart from saved config + order history + current catalog.
+Calls `generate_monthly_basket_candidates()` from `product_semantic_index.py`; falls back to a rule-based stub if that function is not yet available.
+
+**Response data:**
 ```json
 {
-  "household_size": 2,
-  "monthly_budget": 50000,
-  "priority_items": ["leche", "arroz"],
-  "preferred_brands": { "leche": "La Serenísima" },
-  "strict_brand": false,
-  "excluded_categories": ["bebidas alcohólicas"],
-  "notes": "string"
+  "proposed_cart": [
+    {
+      "product_id": "string",
+      "name": "string",
+      "brand": "string",
+      "package_size": "string",
+      "price": 0.00,
+      "quantity": 1,
+      "image_url": "string",
+      "tag": "must_have | recurring | offer | suggested"
+    }
+  ],
+  "total": 0.00
 }
 ```
 
-## POST /api/v1/monthly-plan/generate (planned)
+## POST /api/v1/recurring-plan/accept
 
-Trigger monthly cart generation from saved config + order history + current catalog.
+Save a proposed cart as a new order (same validation as `POST /api/v1/orders`).
 
-**Response data:** `{ "proposed_cart": [], "summary": { "repeated": [], "swapped": [], "skipped": [], "new": [] } }`
+**Request:** `{ "proposed_cart": [ <cart items> ] }`
+**Response data:** `{ "order_id": "string", "total": 0.00, "items": 0 }`
