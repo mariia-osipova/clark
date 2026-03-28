@@ -39,7 +39,12 @@ def search(query: str, catalog: list[dict], top_k: int = 10) -> list[dict]:
             p for p in catalog
             if p.get("available_quantity", 1) != 0 and _keyword_score(tokens, p) > 0
         ]
-    return rank_candidates(candidates, query)[:top_k]
+        return rank_candidates(candidates, query)[:top_k]
+
+    # Semantic candidates: re-rank by keyword/brand/size signals.
+    # If none score above zero (broad query like "para el desayuno"), preserve semantic order.
+    reranked = rank_candidates(candidates, query)
+    return (reranked if reranked else candidates)[:top_k]
 
 
 def rank_candidates(candidates: list[dict], query: str) -> list[dict]:

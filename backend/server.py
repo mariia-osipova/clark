@@ -48,6 +48,15 @@ def main() -> None:
     if not os.environ.get("OPENAI_API_KEY"):
         print("WARNING: OPENAI_API_KEY is not set. Chat endpoint will not work.")
 
+    # Pre-warm the sentence-transformer model so the first chat request isn't slow
+    try:
+        from backend.product_semantic_index import _load_model
+        print("Loading embedding model...", end=" ", flush=True)
+        _load_model()
+        print("ready.")
+    except Exception:
+        pass  # non-fatal
+
     server = ThreadingHTTPServer((host, port), RequestHandler)
     print(f"supershop server running at http://{host}:{port}")
     try:
