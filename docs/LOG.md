@@ -18,6 +18,14 @@ Created `backend/db.py` with `init_db()` and `get_db()`. Tables: `users` (id, us
 
 ---
 
+## 2026-03-27 — Juan — V1 product ranking: brand/size matching and unit normalisation
+
+**Type:** decision
+
+Enhanced `rank_candidates()` in `backend/product_semantic_index.py` with three new scoring signals: exact brand match (+5, accent-insensitive via `_normalize_text`), exact package-size match (+5, unit-normalised via `_normalize_size` so "1L" == "1000ml" == "1 litro"), and OOS filter (mirrors the one already in `search()`). Created `tests/test_product_ranking.py` with 15 unit tests covering helpers and both public functions. V1 eval scenarios in `llm_eval_harness.py` annotated — `expected_product_ids` to be filled after first real scrape.
+
+---
+
 ## 2026-03-27 — Juan — Catalog scraper and embedding index implemented
 
 **Type:** catalog

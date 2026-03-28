@@ -44,6 +44,9 @@ SCENARIOS: list[Scenario] = [
     ),
 
     # V1 — exact product match
+    # NOTE: expected_product_ids are intentionally empty here.
+    # Fill them in after running scripts/scrape_catalog.py and identifying
+    # the real product IDs for "leche entera 1L" and "yogur" in the live catalog.
     Scenario(
         id="v1_exact_product",
         description="User asks for leche entera 1L → cart has one matching item",

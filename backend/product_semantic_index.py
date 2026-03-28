@@ -10,6 +10,7 @@ Provides:
 
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -40,14 +41,20 @@ def search(query: str, catalog: list[dict], top_k: int = 10) -> list[dict]:
 def rank_candidates(candidates: list[dict], query: str) -> list[dict]:
     """
     Re-rank a pre-filtered candidate list by relevance to query.
-    Considers: keyword match, discount, availability.
+    Considers: keyword match, exact brand match, exact package-size match, discount, availability.
+    Out-of-stock items are excluded.
     """
     tokens = _tokenize(query)
     scored = []
     for p in candidates:
+        if p.get("available_quantity", 1) == 0:
+            continue
         score = _keyword_score(tokens, p)
+        score += _brand_score(tokens, p)          # +5 for exact brand match
+        score += _size_score(query, p)            # +5 for exact package-size match
         score += p.get("discount_pct", 0) * 0.01  # small boost for discounts
-        scored.append((score, p))
+        if score > 0:
+            scored.append((score, p))
     scored.sort(key=lambda x: -x[0])
     return [p for _, p in scored]
 
@@ -123,5 +130,82 @@ def _product_text(product: dict) -> str:
         product.get("package_size", ""),
     ]
     return " ".join(p for p in parts if p)
+
+
+def _normalize_text(s: str) -> str:
+    """Lowercase and strip accents for accent-insensitive comparisons."""
+    nfkd = unicodedata.normalize("NFD", s.lower())
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+# Multipliers to convert every liquid/solid unit to a canonical base (ml or g)
+_LIQUID_UNITS = {
+    "ml": 1, "cc": 1,
+    "l": 1000, "lt": 1000, "lts": 1000, "litro": 1000, "litros": 1000,
+}
+_SOLID_UNITS = {
+    "g": 1, "gr": 1, "gramo": 1, "gramos": 1,
+    "kg": 1000, "kilo": 1000, "kilos": 1000,
+}
+# Longer alternatives must come first so the regex engine doesn't stop early
+_UNIT_RE = re.compile(
+    r"(\d+(?:[.,]\d+)?)\s*"
+    r"(ml|cc|litros|litro|lts|lt|l|kg|kilos|kilo|gramos|gramo|gr|g)\b",
+    re.IGNORECASE,
+)
+
+
+def _normalize_size(text: str) -> tuple[float, str] | None:
+    """
+    Parse the first size expression in *text* and return (canonical_value, unit_class).
+    unit_class is 'liquid' (base: ml) or 'solid' (base: g).
+    Returns None if no recognisable size is found.
+
+    Examples:
+        "1L"       → (1000.0, 'liquid')
+        "1000ml"   → (1000.0, 'liquid')
+        "500 ml"   → (500.0,  'liquid')
+        "1 litro"  → (1000.0, 'liquid')
+        "200g"     → (200.0,  'solid')
+        "1kg"      → (1000.0, 'solid')
+    """
+    m = _UNIT_RE.search(text)
+    if not m:
+        return None
+    value = float(m.group(1).replace(",", "."))
+    unit = m.group(2).lower()
+    if unit in _LIQUID_UNITS:
+        return (value * _LIQUID_UNITS[unit], "liquid")
+    if unit in _SOLID_UNITS:
+        return (value * _SOLID_UNITS[unit], "solid")
+    return None
+
+
+def _brand_score(query_tokens: list[str], product: dict) -> float:
+    """
+    Return 5.0 if the product brand appears (accent-insensitive) among the
+    query tokens, 0.0 otherwise.
+    Multi-word brands (e.g. 'La Serenísima') also match if every word is present.
+    """
+    brand = product.get("brand", "")
+    if not brand:
+        return 0.0
+    brand_tokens = _tokenize(_normalize_text(brand))
+    norm_query = [_normalize_text(t) for t in query_tokens]
+    if all(bt in norm_query for bt in brand_tokens):
+        return 5.0
+    return 0.0
+
+
+def _size_score(query: str, product: dict) -> float:
+    """
+    Return 5.0 if the package size expressed in the query matches the
+    product's package_size (after unit normalisation), 0.0 otherwise.
+    """
+    query_size = _normalize_size(query)
+    product_size = _normalize_size(product.get("package_size", ""))
+    if query_size and product_size and query_size == product_size:
+        return 5.0
+    return 0.0
 
 
