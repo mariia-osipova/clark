@@ -7,6 +7,7 @@ Run via: python scripts/run_llm_judge_eval.py
 """
 
 import json
+import re
 import os
 from dataclasses import dataclass, field
 from typing import Any
@@ -20,6 +21,8 @@ class Scenario:
     cart_before: list[dict] = field(default_factory=list)
     expected_product_ids: list[str] = field(default_factory=list)
     expect_clarification: bool = False
+    min_cart_size: int = 0           # cart must have at least this many items
+    expected_min_quantity: int = 0   # at least one cart item must have quantity >= this
     tags: list[str] = field(default_factory=list)
 
 
@@ -49,12 +52,15 @@ SCENARIOS: list[Scenario] = [
         id="exact_product",
         description="User asks for leche entera 1L → cart has one matching item",
         user_message="quiero leche entera 1L",
+        min_cart_size=1,
         tags=["cart"],
     ),
     Scenario(
         id="quantity_request",
         description="User asks for 2 yogures → cart has quantity 2",
         user_message="agrega 2 yogures",
+        min_cart_size=1,
+        expected_min_quantity=2,
         tags=["cart", "quantity"],
     ),
 
@@ -97,6 +103,9 @@ SCENARIOS: list[Scenario] = [
 
 # ─── Judge logic ─────────────────────────────────────────────────────────────
 
+_VERDICT_RE = re.compile(r"^(PASS|FAIL):\s*(.+)", re.IGNORECASE | re.DOTALL)
+
+
 def judge_response(
     scenario: Scenario,
     reply: str,
@@ -128,6 +137,24 @@ def judge_response(
         if missing:
             return EvalResult(scenario.id, False, f"Missing products in cart: {missing}", reply, cart)
 
+    # Rule: cart must meet minimum size
+    if scenario.min_cart_size > 0 and len(cart) < scenario.min_cart_size:
+        return EvalResult(
+            scenario.id, False,
+            f"Cart has {len(cart)} item(s), expected >= {scenario.min_cart_size}",
+            reply, cart,
+        )
+
+    # Rule: at least one cart item must meet minimum quantity
+    if scenario.expected_min_quantity > 0:
+        max_qty = max((i.get("quantity", 0) for i in cart), default=0)
+        if max_qty < scenario.expected_min_quantity:
+            return EvalResult(
+                scenario.id, False,
+                f"No cart item has quantity >= {scenario.expected_min_quantity} (max found: {max_qty})",
+                reply, cart,
+            )
+
     # Additional semantic/content review for richer shopping scenarios
     if "llm_judge" in scenario.tags and openai_client:
         return _llm_judge(scenario, reply, cart, openai_client)
@@ -137,7 +164,15 @@ def judge_response(
 
 def _build_judge_prompt(scenario: Scenario, reply: str, cart: list[dict]) -> str:
     cart_summary = json.dumps(
-        [{"product_id": i.get("product_id"), "quantity": i.get("quantity")} for i in cart],
+        [
+            {
+                "product_id": i.get("product_id"),
+                "name": i.get("name", ""),
+                "category": i.get("category", ""),
+                "quantity": i.get("quantity"),
+            }
+            for i in cart
+        ],
         ensure_ascii=False,
     )
     return f"""You are evaluating an AI shopping assistant response.
@@ -148,7 +183,7 @@ User message: "{scenario.user_message}"
 Assistant reply:
 {reply}
 
-Cart after response (product_id + quantity):
+Cart after response (product_id, name, category, quantity):
 {cart_summary}
 
 Judge whether the assistant handled the scenario correctly. Answer with exactly:
@@ -173,9 +208,15 @@ def _llm_judge(
             max_tokens=100,
         )
         verdict = response.choices[0].message.content.strip()
-        passed = verdict.upper().startswith("PASS")
-        reason = verdict.split(":", 1)[-1].strip() if ":" in verdict else verdict
+        m = _VERDICT_RE.match(verdict)
+        if not m:
+            return EvalResult(
+                scenario.id, False,
+                f"LLM judge returned unrecognised format: {verdict[:80]}",
+                reply, cart,
+            )
+        passed = m.group(1).upper() == "PASS"
+        reason = m.group(2).strip()
         return EvalResult(scenario.id, passed, f"LLM judge: {reason}", reply, cart)
     except Exception as e:
-        # If the judge call fails, fall back to passing (don't block CI on API errors)
-        return EvalResult(scenario.id, True, f"LLM judge unavailable ({e}), rule-based pass", reply, cart)
+        return EvalResult(scenario.id, False, f"LLM judge error: {e}", reply, cart)

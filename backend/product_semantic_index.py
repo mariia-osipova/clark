@@ -229,9 +229,13 @@ def _load_model():
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
-    """Cosine similarity between two vectors (assumed unit-normalised by sentence-transformers)."""
+    """Cosine similarity between two vectors."""
     dot = sum(x * y for x, y in zip(a, b))
-    return dot
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 def _load_index() -> list[dict]:
