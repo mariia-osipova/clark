@@ -2,6 +2,14 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Jeremias — Permanent rule: no ad hoc agent behavior fixes
+
+**Type:** decision
+
+Recorded a permanent engineering rule for the shopping agent: never solve behavior bugs with phrase-specific heuristics, one-off guards, or other ad hoc logic. Future enforced behavior in `backend/chat_agent_agentic.py` must be expressed through LangGraph structure, graph state, tool-grounded runtime invariants, or similarly general mechanisms. Added this as a repo non-negotiable in `CLAUDE.md` and as a Jeremias-area convention in `team/JEREMIAS.md`.
+
+---
+
 ## 2026-03-28 — Jeremias — Agent weakness fixes landed and chat contract documented
 
 **Type:** api
@@ -79,3 +87,27 @@ Created `scripts/scrape_catalog.py`: paginates Carrefour Argentina VTEX API, nor
 **Type:** version
 
 Created the initial repo skeleton: CLAUDE.md, team files (JEREMIAS.md, JUAN.md, MARIIA.md, NACHO.md), docs/, frontend stubs, backend stubs, data/, scripts/, requirements.txt, .env.example. App renamed to supershop. Ready for parallel work.
+
+---
+
+## 2026-03-28 01:34 — Jeremias — Clarification flow now enforced for ambiguous search results
+
+**Type:** blocker
+
+Root cause: clarification existed only as prompt guidance plus manual tool handling, so a broad query like `leche` could still flow straight from `search_products` to `set_cart` without ever asking the user to choose. Added a server-side ambiguity gate in `backend/chat_agent_agentic.py` that auto-returns clarification options for generic multi-match searches, plus regression tests covering the heuristic and the real LangGraph path. `tests/test_chat_agent.py` and `tests/test_api.py` both pass after the fix.
+
+---
+
+## 2026-03-28 01:41 — Jeremias — Clarification trigger now covers option-browsing phrasing
+
+**Type:** blocker
+
+Follow-up fix for a missed real prompt: phrases like `dame opciones para galletitas` were not treated as broad ambiguous shopping requests because the heuristic only matched short generic queries. Normalized the query before ambiguity detection so filler words like `dame opciones para` still produce a `clarification` payload and popup, and added regressions for that exact wording in `tests/test_chat_agent.py`.
+
+---
+
+## 2026-03-28 01:43 — Jeremias — Replaced clarification heuristic with graph-level unresolved-choice handling
+
+**Type:** decision
+
+Removed the ad hoc token-based ambiguity detection from `backend/chat_agent_agentic.py`. The graph now records viable search results as structured selection candidates and only converts them into a `clarification` payload when the agent tries to end the turn without either mutating the cart or explicitly calling `request_clarification`, which keeps the flow agentic while still guaranteeing the popup for unresolved option lists. Full suite after the change: `123 passed, 1 skipped`.

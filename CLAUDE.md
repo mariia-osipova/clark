@@ -31,6 +31,7 @@ All significant decisions, blockers, and progress must be logged. See [docs/LOGG
 
 ## Non-negotiables
 - Keep external stack stable: vanilla frontend, Python stdlib backend, SQLite, JSON snapshot/index, OpenAI-based agent via LangGraph.
+- Never ship ad hoc, phrase-specific, or one-off behavioral rules in the shopping agent. Enforced behavior must emerge from the LangGraph flow, graph state, tool outputs, or other generalizable runtime invariants.
 - Prefer additive changes over rewrites.
 - Do not start next version until current version has one reproducible happy-path demo.
 - Before merging a version, run the unite gate checklist from [plan.md](plan.md).
