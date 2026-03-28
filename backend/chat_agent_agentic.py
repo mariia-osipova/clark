@@ -104,6 +104,7 @@ class AgentState(TypedDict):
     result_cart: list[dict] | None
     clarification: dict | None
     missing_items: list[str]
+    resolved_queries: dict  # query_text → product dict, prevents re-triggering clarification
 
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
@@ -400,7 +401,13 @@ def _build_graph(catalog: list[dict], api_key: str):
     tools_by_name = {t.name: t for t in tools}
 
     def agent_node(state: AgentState) -> dict:
-        response = llm.invoke(state["messages"])
+        messages = state["messages"]
+        # Keep all SystemMessages plus the last 30 non-system messages to avoid
+        # blowing the context window on long clarification chains.
+        system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
+        non_system = [m for m in messages if not isinstance(m, SystemMessage)]
+        trimmed = system_msgs + non_system[-30:]
+        response = llm.invoke(trimmed)
         return {"messages": [response]}
 
     def tools_node(state: AgentState, config: RunnableConfig) -> dict:
@@ -415,6 +422,7 @@ def _build_graph(catalog: list[dict], api_key: str):
             (str(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
             "",
         )
+        resolved_queries: dict = dict(state.get("resolved_queries") or {})
 
         # Pass 1: execute ALL tool calls in original order.
         # For add_to_cart calls, if the product_id was not verified by a resolve_product
@@ -422,6 +430,7 @@ def _build_graph(catalog: list[dict], api_key: str):
         # cannot bypass the ambiguity gate by calling add_to_cart directly.
         tool_results: list[tuple[dict, str]] = []
         resolved_this_batch: dict[str, dict] = {}  # pid → product dict
+        last_resolve_query: str = ""  # last resolve_product query in this batch
 
         for tc in last_msg.tool_calls:
             tool_fn = tools_by_name.get(tc["name"])
@@ -449,6 +458,7 @@ def _build_graph(catalog: list[dict], api_key: str):
                                     "options": check["options"],
                                     "pending_request_id": str(uuid.uuid4()),
                                     "pending_message": pending_message,
+                                    "original_query": product.get("name", ""),
                                 }
                                 # Block this add_to_cart — tell the LLM why
                                 tool_results.append((tc, json.dumps({
@@ -466,7 +476,26 @@ def _build_graph(catalog: list[dict], api_key: str):
                     result = json.dumps({"error": "tool execution failed"})
                 tool_results.append((tc, result))
 
-            else:
+            elif tc["name"] == "resolve_product":
+                query = tc["args"].get("query", "")
+                # If this query was already resolved by a prior clarification, return
+                # the cached resolved result so the agent can continue without looping.
+                # Use substring matching to handle variations like "mascarpone" vs "queso mascarpone".
+                query_lower = query.lower().strip()
+                cached = resolved_queries.get(query_lower)
+                if not cached:
+                    for stored_key, stored_val in resolved_queries.items():
+                        if stored_key in query_lower or query_lower in stored_key:
+                            cached = stored_val
+                            break
+                if cached:
+                    synthetic = json.dumps({"status": "resolved", "product": cached})
+                    tool_results.append((tc, synthetic))
+                    resolved_this_batch[cached.get("id", "")] = cached
+                    last_resolve_query = query_lower
+                    continue
+
+                last_resolve_query = query_lower
                 try:
                     result = tool_fn.invoke(tc["args"])
                 except Exception:
@@ -475,13 +504,20 @@ def _build_graph(catalog: list[dict], api_key: str):
                 tool_results.append((tc, result))
 
                 # Track product_ids that are now safely resolved in this batch
-                if tc["name"] == "resolve_product":
-                    try:
-                        parsed = json.loads(result)
-                        if parsed.get("status") == "resolved" and parsed.get("product", {}).get("id"):
-                            resolved_this_batch[parsed["product"]["id"]] = parsed["product"]
-                    except json.JSONDecodeError:
-                        pass
+                try:
+                    parsed = json.loads(result)
+                    if parsed.get("status") == "resolved" and parsed.get("product", {}).get("id"):
+                        resolved_this_batch[parsed["product"]["id"]] = parsed["product"]
+                except json.JSONDecodeError:
+                    pass
+
+            else:
+                try:
+                    result = tool_fn.invoke(tc["args"])
+                except Exception:
+                    _log.exception("tool %s failed with args %s", tc["name"], tc["args"])
+                    result = json.dumps({"error": "tool execution failed"})
+                tool_results.append((tc, result))
 
         # Pass 2: build ToolMessages and process side effects
         new_messages: list = []
@@ -500,6 +536,7 @@ def _build_graph(catalog: list[dict], api_key: str):
                     "options": parsed.get("options", tc["args"].get("options", [])),
                     "pending_request_id": parsed.get("pending_request_id"),
                     "pending_message": pending_message,
+                    "original_query": last_resolve_query,
                 }
 
             elif tc["name"] == "report_missing":
@@ -535,6 +572,7 @@ def _build_graph(catalog: list[dict], api_key: str):
                             "options": parsed["options"],
                             "pending_request_id": str(uuid.uuid4()),
                             "pending_message": pending_message,
+                            "original_query": tc["args"].get("query", ""),
                         }
                         break
 
@@ -546,6 +584,7 @@ def _build_graph(catalog: list[dict], api_key: str):
             "result_cart": result_cart or None,
             "clarification": clarification,
             "missing_items": missing_items,
+            "resolved_queries": resolved_queries,
         }
 
     def should_continue(state: AgentState) -> str:
@@ -707,13 +746,56 @@ def handle_chat(
             qty = 1
             product_label = " ".join(filter(None, [product.get("name", ""), product.get("package_size", "")]))
 
+            # Retrieve the original query and pending message from the prior clarification state
+            prior_state = None
+            original_query = ""
+            pending_message = ""
             if session_id:
-                # Persist choice. The checkpointed graph history already has the original
-                # request — the next user turn will continue naturally from that context.
-                # Do NOT re-invoke here with the original message: doing so causes
-                # resolve_product to re-run for the same query and return needs_clarification
-                # again (the structural invariant catches it), creating an infinite loop.
+                try:
+                    prior_state = app.get_state(config)
+                    prior_clarification = prior_state.values.get("clarification") or {}
+                    original_query = (prior_clarification.get("original_query") or "").lower().strip()
+                    pending_message = prior_clarification.get("pending_message") or ""
+                except Exception:
+                    pass
+
+            if session_id:
                 _write_session_cart_item(session_id, chosen_id, qty)
+
+                # Cache the resolved query so tools_node won't trigger clarification again.
+                # Then re-invoke the graph with the original user request so the agent
+                # continues adding the remaining ingredients.
+                if original_query and pending_message:
+                    # Get existing resolved_queries and add this resolution
+                    existing_resolved = dict((prior_state.values.get("resolved_queries") or {}) if prior_state else {})
+                    existing_resolved[original_query] = product
+                    app.update_state(
+                        config,
+                        {"clarification": None, "resolved_queries": existing_resolved},
+                    )
+                    # Re-invoke graph to continue with remaining ingredients
+                    current_cart = _read_session_cart(session_id, catalog)
+                    cart_lines = "\n".join(
+                        f"- {i.get('name')} x{i.get('quantity')} ${i.get('price', 0):.2f}"
+                        for i in current_cart
+                    ) if current_cart else "vacío"
+                    resume_input = {
+                        "messages": [
+                            SystemMessage(content=f"Carrito actual (actualizado):\n{cart_lines}"),
+                            HumanMessage(content=pending_message),
+                        ],
+                        "clarification": None,
+                        "missing_items": [],
+                    }
+                    final_state = app.invoke(resume_input, config=config)
+                    next_clarification = final_state.get("clarification")
+                    return {
+                        "reply": _extract_reply(final_state),
+                        "cart": _read_session_cart(session_id, catalog),
+                        "clarification": next_clarification,
+                        "missing_items": final_state.get("missing_items") or [],
+                    }
+
                 return {
                     "reply": f"Listo, agregué {product_label} al carrito.",
                     "cart": _read_session_cart(session_id, catalog),
@@ -763,6 +845,7 @@ def handle_chat(
             "result_cart": None if session_id else (initial_cart or None),
             "clarification": None,
             "missing_items": [],
+            "resolved_queries": {},
         }
     else:
         # Existing session: inject updated cart state so removals made via UI are visible,
@@ -795,6 +878,7 @@ def handle_chat(
             "messages": extra_msgs + [cart_update, HumanMessage(content=message)],
             "clarification": None,   # clear any stale clarification from prior turn
             "missing_items": [],     # reset per-turn
+            "resolved_queries": {},  # reset per new user request
         }
 
     final_state = app.invoke(invoke_input, config=config)
