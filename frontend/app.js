@@ -21,8 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindClarificationForm();
   bindModalCancel();
   renderCart();
-  loadCatalog();
-  syncCartFromServer();
+  loadCatalog(); // syncCartFromServer is called inside loadCatalog after catalog is ready
 });
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
@@ -47,6 +46,8 @@ async function loadCatalog() {
     if (!json.ok) throw new Error(json.error || 'Catalog error');
     state.catalog = json.data.products || [];
     renderCatalog(state.catalog);
+    // Sync server cart only after catalog is loaded so items can be hydrated
+    syncCartFromServer();
   } catch (err) {
     showCatalogError(err.message);
   } finally {

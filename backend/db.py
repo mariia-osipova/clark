@@ -184,6 +184,21 @@ def remove_session_cart_item(session_id: str, product_id: str) -> None:
         conn.close()
 
 
+def clear_session_cart(session_id: str) -> None:
+    """Delete all items for a session (called after checkout)."""
+    conn = sqlite3.connect(get_db_path())
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("BEGIN EXCLUSIVE")
+        conn.execute("DELETE FROM session_carts WHERE session_id = ?", (session_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ─── Pending clarification helpers ────────────────────────────────────────────
 
 def save_pending_clarification(
@@ -208,22 +223,19 @@ def save_pending_clarification(
 
 
 def resolve_pending_clarification(session_id: str, pending_request_id: str) -> bool:
-    """Mark a clarification as resolved. Returns True if it existed and was unresolved."""
+    """Mark a clarification as resolved atomically.
+    Returns True only if the row existed and was previously unresolved.
+    Uses a single UPDATE with WHERE resolved_at IS NULL to avoid check-then-act race.
+    """
     conn = get_db()
     try:
-        row = conn.execute(
-            """SELECT resolved_at FROM pending_clarifications
-               WHERE session_id = ? AND pending_request_id = ?""",
-            (session_id, pending_request_id),
-        ).fetchone()
-        if row is None or row["resolved_at"] is not None:
-            return False
-        conn.execute(
-            """UPDATE pending_clarifications SET resolved_at = datetime('now')
-               WHERE session_id = ? AND pending_request_id = ?""",
+        cur = conn.execute(
+            """UPDATE pending_clarifications
+               SET resolved_at = datetime('now')
+               WHERE session_id = ? AND pending_request_id = ? AND resolved_at IS NULL""",
             (session_id, pending_request_id),
         )
         conn.commit()
-        return True
+        return cur.rowcount == 1
     finally:
         conn.close()

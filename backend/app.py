@@ -19,6 +19,7 @@ from backend.db import (
     get_session_cart,
     upsert_session_cart_item,
     remove_session_cart_item,
+    clear_session_cart,
     save_pending_clarification,
     resolve_pending_clarification,
 )
@@ -411,6 +412,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 conn.commit()
             finally:
                 conn.close()
+            clear_session_cart(session_id)
             _log.info("order [%s] placed items=%d total=%.2f", order_id, len(cart), total)
             self.send_json(envelope(data={"order_id": order_id, "total": total}))
         except Exception as e:
