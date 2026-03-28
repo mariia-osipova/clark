@@ -239,6 +239,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._handle_cart_get(parsed.query)
         elif path == "/api/v1/recurring-plan":
             self._handle_recurring_plan_get()
+        elif path == "/dashboard":
+            self._serve_static("/dashboard.html")
         elif path.startswith("/"):
             # Serve static frontend files
             self._serve_static(path)
@@ -249,9 +251,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
 
-        # Binary upload — must not pass through _read_body()
+        # Binary uploads — must not pass through _read_body()
         if path == "/api/v1/transcribe":
             self._handle_transcribe()
+            return
+        if path == "/api/v1/describe-image":
+            self._handle_describe_image()
             return
 
         body = self._read_body()
@@ -722,6 +727,64 @@ class RequestHandler(BaseHTTPRequestHandler):
                     os.unlink(tmp_path)
                 except OSError:
                     pass
+
+    # ─── Image description (vision) ──────────────────────────────────────────
+
+    def _handle_describe_image(self):
+        import base64
+        import os
+        content_type = self.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+        allowed = {"image/jpeg", "image/png", "image/gif", "image/webp"}
+        if content_type not in allowed:
+            self.send_json(envelope(error=f"unsupported image type: {content_type}"), 400)
+            return
+
+        raw = self._read_raw_body(max_bytes=20_000_000)
+        if not raw:
+            self.send_json(envelope(error="image body required (max 20 MB)"), 400)
+            return
+
+        try:
+            b64 = base64.standard_b64encode(raw).decode("ascii")
+            data_url = f"data:{content_type};base64,{b64}"
+
+            from openai import OpenAI
+            client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", ""))
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                max_tokens=512,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Sos un asistente de compras. Se te enviará una imagen: "
+                            "puede ser una lista de compras escrita a mano, una captura de pantalla "
+                            "de un chat o nota, o cualquier imagen con productos a comprar. "
+                            "Extraé todos los productos y cantidades que aparezcan y devolvé "
+                            "un mensaje de texto listo para enviar a un chat de supermercado, "
+                            "en español, de forma natural. "
+                            "Ejemplo: 'necesito 2 litros de leche, pan lactal, 6 huevos y yogur de frutilla'. "
+                            "Si no hay productos reconocibles, respondé solo: NO_LIST. "
+                            "Devolvé únicamente el mensaje o NO_LIST, sin explicaciones ni formato adicional."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
+                        ],
+                    },
+                ],
+            )
+            text = (response.choices[0].message.content or "").strip()
+            if text == "NO_LIST":
+                self.send_json(envelope(error="No se encontraron productos en la imagen"), 422)
+                return
+            _log.info("describe-image: extracted %d chars", len(text))
+            self.send_json(envelope(data={"text": text}))
+        except Exception as e:
+            _log.error("describe-image error: %s", e, exc_info=True)
+            self.send_json(envelope(error=str(e)), 500)
 
     def _serve_static(self, path: str):
         if path == "/" or path == "":

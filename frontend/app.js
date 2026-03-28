@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindClarificationForm();
   bindModalCancel();
   bindAudio();
+  bindImageUpload();
   renderCart();
   loadCatalog();
 });
@@ -509,6 +510,52 @@ async function transcribeAudio(blob) {
   }
 }
 
+
+// ─── Image Upload (Vision AI) ─────────────────────────────────────────────────
+function bindImageUpload() {
+  const imgBtn = document.getElementById('btn-image');
+  const fileInput = document.getElementById('image-file-input');
+
+  imgBtn.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    fileInput.value = '';           // reset so same file can be re-selected
+    if (file) describeImage(file);
+  });
+}
+
+async function describeImage(file) {
+  const imgBtn = document.getElementById('btn-image');
+  imgBtn.disabled = true;
+  imgBtn.textContent = '⏳';
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const res = await fetch(`${API}/describe-image`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'image/jpeg',
+        'X-Session-Token': state.sessionToken,
+      },
+      body: arrayBuffer,
+    });
+    const json = await res.json();
+    if (!json.ok) {
+      appendChatMsg('assistant', `No pude leer la imagen: ${json.error}`);
+      return;
+    }
+    const text = (json.data.text || '').trim();
+    if (text) {
+      document.getElementById('chat-input').value = text;
+      sendChat();
+    }
+  } catch (err) {
+    appendChatMsg('assistant', `Error al procesar la imagen: ${err.message}`);
+  } finally {
+    imgBtn.disabled = false;
+    imgBtn.textContent = '📷';
+  }
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function esc(str) {

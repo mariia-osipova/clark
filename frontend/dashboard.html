@@ -1,0 +1,891 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SuperShop — Retailer Intelligence Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── Login overlay ── */
+    #login-screen {
+      position: fixed; inset: 0; z-index: 9999;
+      background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #login-screen.hidden { display: none; }
+    .login-box {
+      background: #fff; border-radius: 20px; padding: 48px 44px;
+      width: 100%; max-width: 400px;
+      box-shadow: 0 24px 64px rgba(0,0,0,.35);
+      text-align: center;
+    }
+    .login-logo {
+      width: 56px; height: 56px; background: #4f46e5; border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 22px; color: white; margin: 0 auto 20px;
+    }
+    .login-title { font-size: 22px; font-weight: 800; color: #111827; margin-bottom: 4px; }
+    .login-sub { font-size: 13px; color: #6b7280; margin-bottom: 32px; }
+    .login-field { margin-bottom: 16px; text-align: left; }
+    .login-field label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .05em; }
+    .login-field input {
+      width: 100%; padding: 11px 14px; border: 1.5px solid #e5e7eb; border-radius: 10px;
+      font-size: 14px; outline: none; transition: border-color .15s;
+      font-family: inherit; color: #111827;
+    }
+    .login-field input:focus { border-color: #4f46e5; box-shadow: 0 0 0 3px rgba(79,70,229,.12); }
+    .login-btn {
+      width: 100%; padding: 13px; background: #4f46e5; color: white;
+      border: none; border-radius: 10px; font-size: 15px; font-weight: 700;
+      cursor: pointer; margin-top: 8px; transition: background .15s; font-family: inherit;
+    }
+    .login-btn:hover { background: #4338ca; }
+    .login-error {
+      color: #ef4444; font-size: 13px; margin-top: 14px;
+      background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px;
+      padding: 10px 14px; display: none;
+    }
+    .login-error.show { display: block; }
+    .login-badge {
+      margin-top: 28px; font-size: 11px; color: #9ca3af;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    .login-badge::before { content: '🔒'; }
+  </style>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f4f6fb;
+      --surface: #ffffff;
+      --surface2: #f9fafb;
+      --border: #e5e7eb;
+      --text: #111827;
+      --text2: #6b7280;
+      --text3: #9ca3af;
+      --accent: #4f46e5;
+      --accent-light: #eef2ff;
+      --green: #10b981;
+      --green-light: #ecfdf5;
+      --red: #ef4444;
+      --red-light: #fef2f2;
+      --orange: #f59e0b;
+      --orange-light: #fffbeb;
+      --blue: #3b82f6;
+      --blue-light: #eff6ff;
+      --purple: #8b5cf6;
+      --purple-light: #f5f3ff;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+      --shadow-md: 0 4px 12px rgba(0,0,0,.08);
+    }
+
+    body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* ── Header ── */
+    .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 32px; display: flex; align-items: center; justify-content: space-between; height: 60px; position: sticky; top: 0; z-index: 100; box-shadow: var(--shadow); }
+    .header-brand { display: flex; align-items: center; gap: 10px; }
+    .header-logo { width: 32px; height: 32px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 14px; }
+    .header-title { font-weight: 700; font-size: 16px; }
+    .header-subtitle { font-size: 12px; color: var(--text2); margin-top: 1px; }
+    .header-right { display: flex; align-items: center; gap: 16px; }
+    .badge-live { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--green); font-weight: 600; }
+    .badge-live::before { content: ''; width: 8px; height: 8px; background: var(--green); border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .header-date { font-size: 12px; color: var(--text2); }
+    .btn-export { background: var(--accent); color: white; border: none; border-radius: var(--radius-sm); padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; }
+
+    /* ── Tabs ── */
+    .tabs-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 32px; display: flex; gap: 4px; overflow-x: auto; }
+    .tab { padding: 14px 18px; font-size: 13px; font-weight: 500; color: var(--text2); cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; transition: all .15s; }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .tab-icon { margin-right: 6px; }
+
+    /* ── Layout ── */
+    .main { padding: 28px 32px; max-width: 1400px; margin: 0 auto; }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    .section-header { margin-bottom: 24px; }
+    .section-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+    .section-desc { font-size: 13px; color: var(--text2); }
+
+    /* ── KPI Grid ── */
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+    .kpi-label { font-size: 12px; color: var(--text2); font-weight: 500; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 10px; }
+    .kpi-value { font-size: 28px; font-weight: 700; line-height: 1; margin-bottom: 8px; }
+    .kpi-delta { font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 4px; }
+    .kpi-delta.up { color: var(--green); }
+    .kpi-delta.down { color: var(--red); }
+    .kpi-delta.neutral { color: var(--text2); }
+    .kpi-accent-bar { height: 3px; border-radius: 2px; margin-top: 12px; }
+
+    /* ── Chart Grid ── */
+    .chart-grid { display: grid; gap: 16px; margin-bottom: 24px; }
+    .chart-grid-2 { grid-template-columns: 1fr 1fr; }
+    .chart-grid-3 { grid-template-columns: 2fr 1fr 1fr; }
+    .chart-grid-half { grid-template-columns: 1fr 1fr; }
+    .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; box-shadow: var(--shadow); }
+    .chart-card.full { grid-column: 1 / -1; }
+    .chart-title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+    .chart-subtitle { font-size: 12px; color: var(--text2); margin-bottom: 18px; }
+    .chart-wrap { position: relative; }
+    .chart-wrap canvas { max-width: 100%; }
+
+    /* ── Table ── */
+    .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-bottom: 16px; }
+    .table-header { padding: 18px 22px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .table-header .chart-title { margin-bottom: 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: var(--surface2); font-size: 11px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: .05em; padding: 10px 20px; text-align: left; border-bottom: 1px solid var(--border); }
+    td { padding: 12px 20px; font-size: 13px; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface2); }
+
+    /* ── Pill/Badge ── */
+    .pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+    .pill-green { background: var(--green-light); color: var(--green); }
+    .pill-red { background: var(--red-light); color: var(--red); }
+    .pill-orange { background: var(--orange-light); color: var(--orange); }
+    .pill-blue { background: var(--blue-light); color: var(--blue); }
+    .pill-purple { background: var(--purple-light); color: var(--purple); }
+
+    /* ── Progress bar ── */
+    .prog-wrap { display: flex; align-items: center; gap: 10px; }
+    .prog-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+    .prog-fill { height: 100%; border-radius: 3px; }
+    .prog-label { font-size: 12px; font-weight: 600; min-width: 38px; text-align: right; }
+
+    /* ── Gauge row ── */
+    .gauge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .gauge-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); text-align: center; }
+    .gauge-label { font-size: 11px; color: var(--text2); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 14px; }
+    .gauge-ring { position: relative; width: 90px; height: 90px; margin: 0 auto 10px; }
+    .gauge-ring svg { transform: rotate(-90deg); }
+    .gauge-ring-val { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); font-size: 18px; font-weight: 700; }
+    .gauge-note { font-size: 12px; color: var(--text2); }
+
+    /* ── Heatmap ── */
+    .heatmap-grid { display: grid; gap: 3px; }
+    .heatmap-row { display: flex; align-items: center; gap: 3px; }
+    .heatmap-label { font-size: 11px; color: var(--text2); width: 60px; text-align: right; padding-right: 6px; }
+    .hm-cell { width: 32px; height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: white; }
+
+    /* ── Alert row ── */
+    .alert-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-radius: var(--radius-sm); margin-bottom: 8px; border: 1px solid; }
+    .alert-row.red { background: var(--red-light); border-color: #fecaca; }
+    .alert-row.orange { background: var(--orange-light); border-color: #fde68a; }
+    .alert-row.green { background: var(--green-light); border-color: #a7f3d0; }
+    .alert-icon { font-size: 18px; }
+    .alert-text { flex: 1; }
+    .alert-text strong { font-size: 13px; display: block; }
+    .alert-text span { font-size: 12px; color: var(--text2); }
+
+    @media (max-width: 900px) { .chart-grid-2, .chart-grid-3, .chart-grid-half { grid-template-columns: 1fr; } .main { padding: 16px; } }
+  </style>
+</head>
+<body>
+
+<!-- ── Login screen ── -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">SS</div>
+    <div class="login-title">SuperShop Intelligence</div>
+    <div class="login-sub">Retailer Dashboard · Acceso restringido</div>
+    <form id="login-form" autocomplete="off">
+      <div class="login-field">
+        <label>Usuario</label>
+        <input id="login-user" type="text" placeholder="Ingresá tu usuario" autofocus />
+      </div>
+      <div class="login-field">
+        <label>Contraseña</label>
+        <input id="login-pass" type="password" placeholder="Ingresá tu contraseña" />
+      </div>
+      <button class="login-btn" type="submit">Ingresar al Dashboard</button>
+      <div class="login-error" id="login-error">Usuario o contraseña incorrectos.</div>
+    </form>
+    <div class="login-badge">Acceso solo para administradores autorizados</div>
+  </div>
+</div>
+
+<!-- Header -->
+<div class="header">
+  <div class="header-brand">
+    <div class="header-logo">SS</div>
+    <div>
+      <div class="header-title">SuperShop Intelligence</div>
+      <div class="header-subtitle">Retailer Dashboard</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="badge-live">Live</div>
+    <div class="header-date">28 mar 2026 · Semana 13</div>
+    <button class="btn-export">Exportar PDF</button>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs-bar">
+  <div class="tab active" data-tab="exec"><span class="tab-icon">📊</span>Executive Overview</div>
+  <div class="tab" data-tab="growth"><span class="tab-icon">📈</span>Growth & Loyalty</div>
+  <div class="tab" data-tab="merch"><span class="tab-icon">🛒</span>Merchandising</div>
+  <div class="tab" data-tab="ops"><span class="tab-icon">⚙️</span>Availability & Ops</div>
+  <div class="tab" data-tab="model"><span class="tab-icon">🤖</span>Model Health</div>
+</div>
+
+<div class="main">
+
+  <!-- ─────────────── TAB 1: EXECUTIVE OVERVIEW ─────────────── -->
+  <div class="section active" id="tab-exec">
+    <div class="section-header">
+      <div class="section-title">Executive Overview</div>
+      <div class="section-desc">Impacto del agente sobre revenue, conversión, ticket promedio y margen — últimas 12 semanas</div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Revenue Asistido</div>
+        <div class="kpi-value" style="color:var(--accent)">$4.2M</div>
+        <div class="kpi-delta up">↑ 23% vs. período anterior</div>
+        <div class="kpi-accent-bar" style="background:var(--accent);width:73%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Conversión (agente)</div>
+        <div class="kpi-value" style="color:var(--green)">74.3%</div>
+        <div class="kpi-delta up">↑ 18pp vs. búsqueda manual</div>
+        <div class="kpi-accent-bar" style="background:var(--green);width:74%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Basket Uplift</div>
+        <div class="kpi-value" style="color:var(--blue)">+$1,840</div>
+        <div class="kpi-delta up">↑ ticket promedio por sesión</div>
+        <div class="kpi-accent-bar" style="background:var(--blue);width:55%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Tasa de Repetición</div>
+        <div class="kpi-value" style="color:var(--purple)">67%</div>
+        <div class="kpi-delta up">↑ 31pp vs. sin agente</div>
+        <div class="kpi-accent-bar" style="background:var(--purple);width:67%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Margen Delta</div>
+        <div class="kpi-value" style="color:var(--orange)">+1.9pp</div>
+        <div class="kpi-delta up">↑ vs. categoría sin asistir</div>
+        <div class="kpi-accent-bar" style="background:var(--orange);width:45%"></div>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-title">Revenue: Asistido vs. No Asistido</div>
+        <div class="chart-subtitle">Últimas 12 semanas · en miles $ARS</div>
+        <div class="chart-wrap"><canvas id="revenueChart" height="200"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Conversión por Canal</div>
+        <div class="chart-subtitle">Intent-to-cart rate semanal</div>
+        <div class="chart-wrap"><canvas id="conversionChart" height="200"></canvas></div>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-3">
+      <div class="chart-card">
+        <div class="chart-title">Ticket Promedio por Tipo de Sesión</div>
+        <div class="chart-subtitle">Distribución de valor de carrito final</div>
+        <div class="chart-wrap"><canvas id="ticketChart" height="210"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Atribución de Revenue</div>
+        <div class="chart-subtitle">Esta semana</div>
+        <div class="chart-wrap"><canvas id="attributionChart" height="210"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Margen por Categoría</div>
+        <div class="chart-subtitle">Delta agente vs. compra manual</div>
+        <div class="chart-wrap"><canvas id="marginChart" height="210"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────── TAB 2: GROWTH & LOYALTY ─────────────── -->
+  <div class="section" id="tab-growth">
+    <div class="section-header">
+      <div class="section-title">Growth & Loyalty</div>
+      <div class="section-desc">Retención, aceptación de recomendaciones, oferta tomada y cohortes de repetición</div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Riesgo de Churn</div>
+        <div class="kpi-value" style="color:var(--red)">11.4%</div>
+        <div class="kpi-delta down">↓ 4pp rescatados por agente</div>
+        <div class="kpi-accent-bar" style="background:var(--red);width:11%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Rec. Acceptance Rate</div>
+        <div class="kpi-value" style="color:var(--green)">68.2%</div>
+        <div class="kpi-delta up">↑ 12pp vs. mes anterior</div>
+        <div class="kpi-accent-bar" style="background:var(--green);width:68%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Offer Take Rate</div>
+        <div class="kpi-value" style="color:var(--orange)">44.1%</div>
+        <div class="kpi-delta up">↑ oferta relevante → acción</div>
+        <div class="kpi-accent-bar" style="background:var(--orange);width:44%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Repeat Purchase Lift</div>
+        <div class="kpi-value" style="color:var(--purple)">+31pp</div>
+        <div class="kpi-delta up">↑ a 30 días vs. sin asistir</div>
+        <div class="kpi-accent-bar" style="background:var(--purple);width:62%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Automation Reuse</div>
+        <div class="kpi-value" style="color:var(--blue)">58%</div>
+        <div class="kpi-delta neutral">Canasta mensual recurrente</div>
+        <div class="kpi-accent-bar" style="background:var(--blue);width:58%"></div>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-title">Cohorte de Retención (30 días)</div>
+        <div class="chart-subtitle">% usuarios que volvieron a comprar — con agente vs. sin agente</div>
+        <div class="chart-wrap"><canvas id="retentionChart" height="200"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Embudo de Recomendación</div>
+        <div class="chart-subtitle">De sesión con sugerencia a carrito confirmado</div>
+        <div class="chart-wrap"><canvas id="funnelChart" height="200"></canvas></div>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-title">Offer Take Rate por Categoría</div>
+        <div class="chart-subtitle">% de sesiones donde la oferta cambió la elección</div>
+        <div class="chart-wrap"><canvas id="offerCatChart" height="200"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Segmentos de Churn Risk</div>
+        <div class="chart-subtitle">Distribución de usuarios activos esta semana</div>
+        <div class="chart-wrap"><canvas id="churnSegChart" height="200"></canvas></div>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <div class="table-header">
+        <div class="chart-title">Usuarios en Riesgo de Churn — Top 8</div>
+        <span class="pill pill-red">Requieren atención</span>
+      </div>
+      <table>
+        <thead><tr><th>Usuario</th><th>Última compra</th><th>Sesiones</th><th>Riesgo</th><th>Señal</th><th>Acción sugerida</th></tr></thead>
+        <tbody id="churnTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ─────────────── TAB 3: MERCHANDISING ─────────────── -->
+  <div class="section" id="tab-merch">
+    <div class="section-header">
+      <div class="section-title">Merchandising & Assortment</div>
+      <div class="section-desc">Brechas del catálogo, intenciones no satisfechas, switches de marca y oportunidades de marca propia</div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">Intención sin Match</div>
+        <div class="kpi-value" style="color:var(--red)">8.3%</div>
+        <div class="kpi-delta down">213 intenciones sin stock esta semana</div>
+        <div class="kpi-accent-bar" style="background:var(--red);width:8%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Brand Switch Rate</div>
+        <div class="kpi-value" style="color:var(--orange)">22.7%</div>
+        <div class="kpi-delta neutral">Cambio aceptado de marca</div>
+        <div class="kpi-accent-bar" style="background:var(--orange);width:23%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Private Label Win Rate</div>
+        <div class="kpi-value" style="color:var(--green)">31.4%</div>
+        <div class="kpi-delta up">↑ 8pp vs. mes anterior</div>
+        <div class="kpi-accent-bar" style="background:var(--green);width:31%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Revenue Rescatado</div>
+        <div class="kpi-value" style="color:var(--blue)">$380K</div>
+        <div class="kpi-delta up">↑ por sustituciones aceptadas</div>
+        <div class="kpi-accent-bar" style="background:var(--blue);width:48%"></div>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-title">Top Intenciones Sin Resultado</div>
+        <div class="chart-subtitle">Productos solicitados que no tienen match en catálogo</div>
+        <div class="chart-wrap"><canvas id="noMatchChart" height="220"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Aceptación de Sustitución por Categoría</div>
+        <div class="chart-subtitle">% de sustituciones que el usuario aceptó vs. rechazó</div>
+        <div class="chart-wrap"><canvas id="substCatChart" height="220"></canvas></div>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-title">Brand Switch — Origen → Destino (Top 5)</div>
+        <div class="chart-subtitle">Qué marcas reemplazan a cuáles cuando hay switch</div>
+        <div id="switchViz" style="padding:8px 0"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Impacto de Margin: Marca Propia vs. Terceros</div>
+        <div class="chart-subtitle">Margen bruto promedio por tipo de producto sugerido</div>
+        <div class="chart-wrap"><canvas id="plMarginChart" height="210"></canvas></div>
+      </div>
+    </div>
+
+    <div class="table-card">
+      <div class="table-header">
+        <div class="chart-title">Oportunidades de Catálogo — Productos a Incorporar</div>
+        <span class="pill pill-orange">213 intenciones perdidas</span>
+      </div>
+      <table>
+        <thead><tr><th>Intención del usuario</th><th>Frecuencia / semana</th><th>Revenue potencial</th><th>Categoría</th><th>Match más cercano actual</th><th>Prioridad</th></tr></thead>
+        <tbody id="gapTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ─────────────── TAB 4: OPS ─────────────── -->
+  <div class="section" id="tab-ops">
+    <div class="section-header">
+      <div class="section-title">Availability & Operations</div>
+      <div class="section-desc">OOS, sustituciones, fallas de fulfillment y su impacto en el comportamiento post-pedido</div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-label">OOS Rate Global</div>
+        <div class="kpi-value" style="color:var(--red)">6.8%</div>
+        <div class="kpi-delta down">↑ 1.2pp vs. semana anterior</div>
+        <div class="kpi-accent-bar" style="background:var(--red);width:7%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Subst. Acceptance</div>
+        <div class="kpi-value" style="color:var(--green)">71.3%</div>
+        <div class="kpi-delta up">↑ 14pp por contexto de usuario</div>
+        <div class="kpi-accent-bar" style="background:var(--green);width:71%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Order Rescue Rate</div>
+        <div class="kpi-value" style="color:var(--blue)">84.2%</div>
+        <div class="kpi-delta up">↑ pedidos salvados por agente</div>
+        <div class="kpi-accent-bar" style="background:var(--blue);width:84%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Next-order Delay</div>
+        <div class="kpi-value" style="color:var(--orange)">+2.1 días</div>
+        <div class="kpi-delta neutral">Promedio post-falla de fulfillment</div>
+        <div class="kpi-accent-bar" style="background:var(--orange);width:30%"></div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Promoted Item Fail</div>
+        <div class="kpi-value" style="color:var(--red)">3.2%</div>
+        <div class="kpi-delta down">↑ item en oferta sin stock</div>
+        <div class="kpi-accent-bar" style="background:var(--red);width:3%"></div>
+      </div>
+    </div>
+
+    <div class="chart-card" style="margin-bottom:16px">
+      <div class="chart-title">Alertas de Operaciones — Esta Semana</div>
+      <div class="chart-subtitle" style="margin-bottom:16px">Incidentes con impacto directo en experiencia de usuario</div>
+      <div class="alert-row red">
+        <div class="alert-icon">🔴</div>
+        <div class="alert-text"><strong>Queso Mozzarella — OOS 4 días consecutivos</strong><span>38 intentos de compra sin resultado · Revenue potencial perdido: $94,200</span></div>
+        <span class="pill pill-red">Crítico</span>
+      </div>
+      <div class="alert-row orange">
+        <div class="alert-icon">🟠</div>
+        <div class="alert-text"><strong>Yogur Ser Light 180g — En oferta pero sin stock desde ayer</strong><span>22 sustituciones realizadas · 14 aceptadas, 8 abandonos</span></div>
+        <span class="pill pill-orange">Alto</span>
+      </div>
+      <div class="alert-row orange">
+        <div class="alert-icon">🟠</div>
+        <div class="alert-text"><strong>Aceite de oliva Cocinero — Demanda +60% vs. semana anterior</strong><span>Stock proyectado para 2 días · Sustituciones disponibles: 3</span></div>
+        <span class="pill pill-orange">Alto</span>
+      </div>
+      <div class="alert-row green">
+        <div class="alert-icon">🟢</div>
+        <div class="alert-text"><strong>Leche Descremada La Serenísima — Reposición detectada</strong><span>Demanda contenida por sustituciones durante 3 días · Ahora disponible</span></div>
+        <span class="pill pill-green">Resuelto</span>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-title">OOS Rate por Categoría</div>
+        <div class="chart-subtitle">% de intenciones de compra sin stock disponible</div>
+        <div class="chart-wrap"><canvas id="oosChart" height="220"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Comportamiento Post-Falla</div>
+        <div class="chart-subtitle">¿Qué hace el usuario después de una sustitución?</div>
+        <div class="chart-wrap"><canvas id="postFailChart" height="220"></canvas></div>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-title">Evolución OOS Rate — Últimas 8 semanas</div>
+        <div class="chart-subtitle">Global vs. categorías críticas</div>
+        <div class="chart-wrap"><canvas id="oosTrendChart" height="200"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Sustitución Aceptada vs. Rechazada por Tipo</div>
+        <div class="chart-subtitle">¿Qué tipo de sustitución funciona mejor?</div>
+        <div class="chart-wrap"><canvas id="substTypeChart" height="200"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─────────────── TAB 5: MODEL HEALTH ─────────────── -->
+  <div class="section" id="tab-model">
+    <div class="section-header">
+      <div class="section-title">Model Health</div>
+      <div class="section-desc">Latencia, tasa de exactitud, clarificaciones, fallbacks y frescura del catálogo</div>
+    </div>
+
+    <div class="gauge-grid">
+      <div class="gauge-card">
+        <div class="gauge-label">Exact-Match Rate</div>
+        <div class="gauge-ring"><svg width="90" height="90" viewBox="0 0 90 90"><circle cx="45" cy="45" r="38" fill="none" stroke="#e5e7eb" stroke-width="9"/><circle cx="45" cy="45" r="38" fill="none" stroke="#10b981" stroke-width="9" stroke-dasharray="239" stroke-dashoffset="39" stroke-linecap="round"/></svg><div class="gauge-ring-val" style="color:var(--green)">84%</div></div>
+        <div class="gauge-note">Intención → producto exacto</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-label">Uptime</div>
+        <div class="gauge-ring"><svg width="90" height="90" viewBox="0 0 90 90"><circle cx="45" cy="45" r="38" fill="none" stroke="#e5e7eb" stroke-width="9"/><circle cx="45" cy="45" r="38" fill="none" stroke="#4f46e5" stroke-width="9" stroke-dasharray="239" stroke-dashoffset="2" stroke-linecap="round"/></svg><div class="gauge-ring-val" style="color:var(--accent)">99.1%</div></div>
+        <div class="gauge-note">Últimas 30 días</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-label">Clarification Rate</div>
+        <div class="gauge-ring"><svg width="90" height="90" viewBox="0 0 90 90"><circle cx="45" cy="45" r="38" fill="none" stroke="#e5e7eb" stroke-width="9"/><circle cx="45" cy="45" r="38" fill="none" stroke="#f59e0b" stroke-width="9" stroke-dasharray="239" stroke-dashoffset="190" stroke-linecap="round"/></svg><div class="gauge-ring-val" style="color:var(--orange)">20%</div></div>
+        <div class="gauge-note">Sesiones que necesitan aclaración</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-label">Clarification Salvage</div>
+        <div class="gauge-ring"><svg width="90" height="90" viewBox="0 0 90 90"><circle cx="45" cy="45" r="38" fill="none" stroke="#e5e7eb" stroke-width="9"/><circle cx="45" cy="45" r="38" fill="none" stroke="#3b82f6" stroke-width="9" stroke-dasharray="239" stroke-dashoffset="57" stroke-linecap="round"/></svg><div class="gauge-ring-val" style="color:var(--blue)">76%</div></div>
+        <div class="gauge-note">Clarificadas → carrito completado</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-label">Fallback Rate</div>
+        <div class="gauge-ring"><svg width="90" height="90" viewBox="0 0 90 90"><circle cx="45" cy="45" r="38" fill="none" stroke="#e5e7eb" stroke-width="9"/><circle cx="45" cy="45" r="38" fill="none" stroke="#ef4444" stroke-width="9" stroke-dasharray="239" stroke-dashoffset="225" stroke-linecap="round"/></svg><div class="gauge-ring-val" style="color:var(--red)">6%</div></div>
+        <div class="gauge-note">Agente cayó a respuesta genérica</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-label">Inv. Freshness</div>
+        <div class="gauge-ring"><svg width="90" height="90" viewBox="0 0 90 90"><circle cx="45" cy="45" r="38" fill="none" stroke="#e5e7eb" stroke-width="9"/><circle cx="45" cy="45" r="38" fill="none" stroke="#8b5cf6" stroke-width="9" stroke-dasharray="239" stroke-dashoffset="24" stroke-linecap="round"/></svg><div class="gauge-ring-val" style="color:var(--purple)">90%</div></div>
+        <div class="gauge-note">Stock sincronizado &lt;15 min</div>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-title">Latencia P50 / P95 / P99</div>
+        <div class="chart-subtitle">Tiempo de respuesta del agente en ms — últimas 24 horas</div>
+        <div class="chart-wrap"><canvas id="latencyChart" height="200"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Distribución de Errores por Tipo</div>
+        <div class="chart-subtitle">Clasificación de fallos del sistema</div>
+        <div class="chart-wrap"><canvas id="errorChart" height="200"></canvas></div>
+      </div>
+    </div>
+
+    <div class="chart-grid chart-grid-2">
+      <div class="chart-card">
+        <div class="chart-title">Exact-Match Rate por Categoría</div>
+        <div class="chart-subtitle">Qué tan bien entiende el agente cada sección del catálogo</div>
+        <div id="matchBarsDiv" style="padding:8px 0"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Request Volume — Últimas 48 horas</div>
+        <div class="chart-subtitle">Sesiones del agente por hora</div>
+        <div class="chart-wrap"><canvas id="volumeChart" height="200"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /main -->
+
+<script>
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const weeks = ['S1','S2','S3','S4','S5','S6','S7','S8','S9','S10','S11','S12'];
+const shortWeeks = ['S6','S7','S8','S9','S10','S11','S12','S13'];
+const COLORS = {
+  accent:'#4f46e5', green:'#10b981', red:'#ef4444', orange:'#f59e0b',
+  blue:'#3b82f6', purple:'#8b5cf6', gray:'#9ca3af',
+  accentA:'rgba(79,70,229,.15)', greenA:'rgba(16,185,129,.15)',
+  blueA:'rgba(59,130,246,.15)', orangeA:'rgba(245,158,11,.15)',
+};
+function mkChart(id, cfg){ return new Chart($(id), cfg); }
+const baseFont = { family: '-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif', size: 12 };
+Chart.defaults.font = baseFont;
+Chart.defaults.color = '#6b7280';
+Chart.defaults.plugins.legend.labels.boxWidth = 10;
+Chart.defaults.plugins.legend.labels.padding = 14;
+const noGrid = { grid:{ color:'#f3f4f6' } };
+
+// ── Tab switching ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    $('tab-' + t.dataset.tab).classList.add('active');
+  });
+});
+
+// ══════════════════════════════════════════════════════════
+// TAB 1 — EXECUTIVE OVERVIEW
+// ══════════════════════════════════════════════════════════
+mkChart('revenueChart',{type:'line',data:{
+  labels: weeks,
+  datasets:[
+    {label:'Asistido por agente',data:[180,210,245,270,290,310,340,380,410,450,490,540],borderColor:COLORS.accent,backgroundColor:COLORS.accentA,tension:.4,fill:true,pointRadius:3},
+    {label:'Sin agente',data:[150,155,160,158,162,165,160,168,172,178,180,185],borderColor:COLORS.gray,backgroundColor:'rgba(156,163,175,.1)',tension:.4,fill:true,pointRadius:3,borderDash:[4,3]},
+  ]
+},options:{responsive:true,plugins:{legend:{position:'top'}},scales:{y:{...noGrid,ticks:{callback:v=>'$'+v+'K'}},x:noGrid}}});
+
+mkChart('conversionChart',{type:'bar',data:{
+  labels: weeks,
+  datasets:[
+    {label:'Agente',data:[61,63,66,68,70,70,72,71,73,74,74,74],backgroundColor:COLORS.accent,borderRadius:4},
+    {label:'Búsqueda manual',data:[48,49,50,50,51,51,52,53,53,54,55,56],backgroundColor:'#e5e7eb',borderRadius:4},
+  ]
+},options:{responsive:true,plugins:{legend:{position:'top'}},scales:{y:{...noGrid,max:90,ticks:{callback:v=>v+'%'}},x:noGrid}}});
+
+mkChart('ticketChart',{type:'bar',data:{
+  labels:['Receta completa','Lista recurrente','Pedido libre','Solo catálogo'],
+  datasets:[{label:'Ticket promedio ($ARS)',data:[8400,6200,4800,3100],backgroundColor:[COLORS.accent,COLORS.blue,COLORS.green,COLORS.gray],borderRadius:6}]
+},options:{responsive:true,indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{...noGrid,ticks:{callback:v=>'$'+v}},y:noGrid}}});
+
+mkChart('attributionChart',{type:'doughnut',data:{
+  labels:['Receta/intención','Lista recurrente','Clarificación rescatada','Sustitución aceptada','Manual'],
+  datasets:[{data:[38,25,16,13,8],backgroundColor:[COLORS.accent,COLORS.blue,COLORS.green,COLORS.orange,COLORS.gray],borderWidth:2,borderColor:'#fff'}]
+},options:{responsive:true,plugins:{legend:{position:'bottom',labels:{font:{size:11}}}},cutout:'62%'}});
+
+mkChart('marginChart',{type:'bar',data:{
+  labels:['Lácteos','Almacén','Bebidas','Limpieza','Carnes','Verdulería'],
+  datasets:[{label:'Delta margen (pp)',data:[2.4,1.8,1.2,2.9,0.8,1.4],backgroundColor:d=>d.raw>0?COLORS.green:COLORS.red,backgroundColor:[COLORS.green,COLORS.green,COLORS.green,COLORS.green,COLORS.orange,COLORS.green],borderRadius:4}]
+},options:{responsive:true,indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{...noGrid,ticks:{callback:v=>'+'+v+'pp'}},y:noGrid}}});
+
+// ══════════════════════════════════════════════════════════
+// TAB 2 — GROWTH & LOYALTY
+// ══════════════════════════════════════════════════════════
+mkChart('retentionChart',{type:'line',data:{
+  labels:['Semana 1','Semana 2','Semana 3','Semana 4','Semana 6','Semana 8','Semana 12'],
+  datasets:[
+    {label:'Con agente',data:[100,82,74,69,63,60,57],borderColor:COLORS.accent,backgroundColor:COLORS.accentA,tension:.4,fill:true,pointRadius:4},
+    {label:'Sin agente',data:[100,62,50,42,35,30,26],borderColor:COLORS.gray,backgroundColor:'rgba(156,163,175,.1)',tension:.4,fill:true,borderDash:[4,3],pointRadius:4},
+  ]
+},options:{responsive:true,plugins:{legend:{position:'top'}},scales:{y:{...noGrid,max:110,ticks:{callback:v=>v+'%'}},x:noGrid}}});
+
+mkChart('funnelChart',{type:'bar',data:{
+  labels:['Sesiones con rec.','Rec. mostrada','Rec. considerada','Añadida al carrito','Pedido completado'],
+  datasets:[{label:'Usuarios',data:[2840,2840,2120,1936,1540],backgroundColor:[COLORS.accent,'#6366f1','#818cf8','#a5b4fc','#c7d2fe'],borderRadius:5}]
+},options:{responsive:true,indexAxis:'y',plugins:{legend:{display:false}},scales:{x:noGrid,y:noGrid}}});
+
+mkChart('offerCatChart',{type:'bar',data:{
+  labels:['Lácteos','Bebidas','Almacén','Snacks','Limpieza','Carnes'],
+  datasets:[
+    {label:'Oferta tomada',data:[52,47,41,38,35,29],backgroundColor:COLORS.orange,borderRadius:4,stack:'s'},
+    {label:'Oferta ignorada',data:[48,53,59,62,65,71],backgroundColor:'#fde68a',borderRadius:4,stack:'s'},
+  ]
+},options:{responsive:true,plugins:{legend:{position:'top'}},scales:{x:noGrid,y:{...noGrid,max:100,stacked:true,ticks:{callback:v=>v+'%'}}}}});
+
+mkChart('churnSegChart',{type:'doughnut',data:{
+  labels:['Sin riesgo','Riesgo bajo','Riesgo medio','Riesgo alto'],
+  datasets:[{data:[58,20,11,11],backgroundColor:[COLORS.green,COLORS.blue,COLORS.orange,COLORS.red],borderWidth:2,borderColor:'#fff'}]
+},options:{responsive:true,plugins:{legend:{position:'bottom',labels:{font:{size:11}}}},cutout:'55%'}});
+
+const churnData = [
+  {user:'usuario_4821',last:'Hace 23 días',sessions:2,risk:92,signal:'Sesiones cortas + 0 carrito','action':'Ofrecer canasta recurrente'},
+  {user:'usuario_0344',last:'Hace 19 días',sessions:3,risk:87,signal:'Sustitución rechazada x2','action':'Reponer producto original'},
+  {user:'usuario_2290',last:'Hace 17 días',sessions:1,risk:81,signal:'Abandono post-OOS','action':'Notificar reposición'},
+  {user:'usuario_5512',last:'Hace 16 días',sessions:4,risk:76,signal:'Baja en ticket promedio','action':'Activar oferta personalizada'},
+  {user:'usuario_0987',last:'Hace 14 días',sessions:2,risk:71,signal:'Sin clarificación resuelta','action':'Simplificar flujo'},
+  {user:'usuario_3301',last:'Hace 13 días',sessions:5,risk:65,signal:'Categoría excluida ampliada','action':'Revisar preferencias'},
+  {user:'usuario_1188',last:'Hace 12 días',sessions:3,risk:58,signal:'Ticket cayó 40%','action':'Canasta sugerida proactiva'},
+  {user:'usuario_7720',last:'Hace 11 días',sessions:2,risk:52,signal:'0 recurrente generado','action':'Onboarding plan mensual'},
+];
+$('churnTable').innerHTML = churnData.map(r=>`<tr>
+  <td><strong>${r.user}</strong></td><td>${r.last}</td><td>${r.sessions}</td>
+  <td><span class="pill ${r.risk>80?'pill-red':r.risk>65?'pill-orange':'pill-blue'}">${r.risk}%</span></td>
+  <td style="font-size:12px;color:var(--text2)">${r.signal}</td>
+  <td style="font-size:12px">${r.action}</td>
+</tr>`).join('');
+
+// ══════════════════════════════════════════════════════════
+// TAB 3 — MERCHANDISING
+// ══════════════════════════════════════════════════════════
+mkChart('noMatchChart',{type:'bar',data:{
+  labels:['Queso crema s/lactosa','Leche de avena Oatly','Pan sin TACC premium','Atún en agua Albacore','Yerba sin palo 1kg','Yogur griego natural','Aceite de coco orgánico','Granola sin azúcar'],
+  datasets:[{label:'Búsquedas / semana',data:[48,42,39,37,31,28,24,19],backgroundColor:COLORS.red,borderRadius:5}]
+},options:{responsive:true,indexAxis:'y',plugins:{legend:{display:false}},scales:{x:noGrid,y:noGrid}}});
+
+mkChart('substCatChart',{type:'bar',data:{
+  labels:['Lácteos','Bebidas','Almacén','Limpieza','Snacks','Carnes','Verdulería'],
+  datasets:[
+    {label:'Aceptada',data:[74,69,71,63,58,55,80],backgroundColor:COLORS.green,borderRadius:4,stack:'s'},
+    {label:'Rechazada',data:[26,31,29,37,42,45,20],backgroundColor:'#fca5a5',borderRadius:4,stack:'s'},
+  ]
+},options:{responsive:true,plugins:{legend:{position:'top'}},scales:{x:noGrid,y:{...noGrid,stacked:true,max:100,ticks:{callback:v=>v+'%'}}}}});
+
+const switchData = [
+  {from:'La Serenísima',to:'Mastellone',pct:34,color:COLORS.blue},
+  {from:'Arcor',to:'Marca propia',pct:28,color:COLORS.green},
+  {from:'Quilmes',to:'Stella Artois',pct:22,color:COLORS.accent},
+  {from:'Skip',to:'Ariel',pct:19,color:COLORS.orange},
+  {from:'Hellmann\'s',to:'Natura',pct:15,color:COLORS.purple},
+];
+$('switchViz').innerHTML = switchData.map(s=>`
+<div style="margin-bottom:14px">
+  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px">
+    <span><strong>${s.from}</strong> → <strong>${s.to}</strong></span>
+    <span style="font-weight:700;color:${s.color}">${s.pct}%</span>
+  </div>
+  <div class="prog-bar"><div class="prog-fill" style="width:${s.pct*2.2}%;background:${s.color}"></div></div>
+</div>`).join('');
+
+mkChart('plMarginChart',{type:'bar',data:{
+  labels:['Marca propia','Marca nacional con oferta','Marca nacional sin oferta','Importado'],
+  datasets:[{label:'Margen bruto (%)',data:[42,28,21,18],backgroundColor:[COLORS.green,COLORS.blue,COLORS.gray,'#c4b5fd'],borderRadius:5}]
+},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{...noGrid,ticks:{callback:v=>v+'%'}},x:noGrid}}});
+
+const gapData = [
+  ['Queso crema sin lactosa',48,'$112,000','Lácteos','Queso crema Casancrem 200g','pill-red'],
+  ['Leche de avena',42,'$98,400','Bebidas no tradicionales','Leche descremada Sancor','pill-red'],
+  ['Pan sin TACC premium',39,'$91,200','Panadería','Bimbo sin gluten','pill-orange'],
+  ['Atún en agua Albacore',37,'$86,600','Almacén','Atún La Campagnola','pill-orange'],
+  ['Yerba sin palo 1kg',31,'$72,500','Infusiones','Taragüi 500g','pill-orange'],
+  ['Yogur griego natural',28,'$65,400','Lácteos','Yogur Activia light','pill-blue'],
+  ['Aceite de coco org.',24,'$56,000','Almacén','Aceite de girasol','pill-blue'],
+];
+$('gapTable').innerHTML = gapData.map(r=>`<tr>
+  <td><strong>${r[0]}</strong></td><td>${r[1]}×</td>
+  <td style="font-weight:600;color:var(--green)">${r[2]}</td>
+  <td>${r[3]}</td><td style="color:var(--text2);font-size:12px">${r[4]}</td>
+  <td><span class="pill ${r[5]}">${r[5].includes('red')?'Alta':r[5].includes('orange')?'Media':'Normal'}</span></td>
+</tr>`).join('');
+
+// ══════════════════════════════════════════════════════════
+// TAB 4 — OPERATIONS
+// ══════════════════════════════════════════════════════════
+mkChart('oosChart',{type:'bar',data:{
+  labels:['Verdulería','Carnes','Lácteos','Panadería','Bebidas','Almacén','Limpieza'],
+  datasets:[{label:'OOS Rate %',data:[14.2,11.8,8.4,7.1,5.2,4.6,2.9],
+    backgroundColor:d=>['#ef4444','#f87171','#fb923c','#fbbf24','#a3e635','#4ade80','#34d399'][d.dataIndex],
+    borderRadius:5}]
+},options:{responsive:true,indexAxis:'y',plugins:{legend:{display:false}},scales:{x:{...noGrid,ticks:{callback:v=>v+'%'},max:18},y:noGrid}}});
+
+mkChart('postFailChart',{type:'doughnut',data:{
+  labels:['Acepta sustitución y completa','Acepta sustitución, menos items','Rechaza y busca manual','Abandona sesión','Vuelve al día siguiente'],
+  datasets:[{data:[46,25,14,8,7],backgroundColor:[COLORS.green,COLORS.blue,COLORS.orange,COLORS.red,'#a78bfa'],borderWidth:2,borderColor:'#fff'}]
+},options:{responsive:true,plugins:{legend:{position:'bottom',labels:{font:{size:11}}}},cutout:'55%'}});
+
+mkChart('oosTrendChart',{type:'line',data:{
+  labels: shortWeeks,
+  datasets:[
+    {label:'Global',data:[5.2,5.8,6.1,7.4,6.9,6.5,7.1,6.8],borderColor:COLORS.red,backgroundColor:'rgba(239,68,68,.1)',tension:.4,fill:true,pointRadius:3},
+    {label:'Lácteos',data:[6.8,7.2,8.1,10.2,9.4,8.8,9.1,8.4],borderColor:COLORS.orange,tension:.4,borderDash:[4,3],pointRadius:3},
+    {label:'Verdulería',data:[10.1,11.4,12.2,14.8,13.2,12.8,14.0,14.2],borderColor:COLORS.purple,tension:.4,borderDash:[3,2],pointRadius:3},
+  ]
+},options:{responsive:true,plugins:{legend:{position:'top'}},scales:{y:{...noGrid,ticks:{callback:v=>v+'%'}},x:noGrid}}});
+
+mkChart('substTypeChart',{type:'bar',data:{
+  labels:['Misma marca, tamaño diff','Misma categoría, marca diff','Producto similar (semántico)','Marca propia equivalente','Cross-category'],
+  datasets:[
+    {label:'Aceptada',data:[81,72,68,59,38],backgroundColor:COLORS.green,borderRadius:4,stack:'s'},
+    {label:'Rechazada',data:[19,28,32,41,62],backgroundColor:'#fca5a5',borderRadius:4,stack:'s'},
+  ]
+},options:{responsive:true,plugins:{legend:{position:'top'}},scales:{x:noGrid,y:{...noGrid,stacked:true,max:100,ticks:{callback:v=>v+'%'}}}}});
+
+// ══════════════════════════════════════════════════════════
+// TAB 5 — MODEL HEALTH
+// ══════════════════════════════════════════════════════════
+const hours = Array.from({length:24},(_,i)=>i+'h');
+mkChart('latencyChart',{type:'line',data:{
+  labels: hours,
+  datasets:[
+    {label:'P50',data:[210,195,188,182,190,220,380,640,820,780,710,680,650,630,660,720,840,920,860,780,660,580,440,310],borderColor:COLORS.green,tension:.4,pointRadius:0,borderWidth:2},
+    {label:'P95',data:[480,440,420,410,430,510,820,1340,1680,1610,1480,1420,1380,1310,1360,1490,1720,1940,1810,1620,1390,1200,940,680],borderColor:COLORS.orange,tension:.4,pointRadius:0,borderWidth:2},
+    {label:'P99',data:[820,750,710,690,730,880,1400,2200,2800,2650,2410,2280,2190,2080,2140,2380,2760,3100,2940,2620,2240,1920,1540,1100],borderColor:COLORS.red,tension:.4,pointRadius:0,borderWidth:2,borderDash:[4,2]},
+  ]
+},options:{responsive:true,plugins:{legend:{position:'top'}},scales:{y:{...noGrid,ticks:{callback:v=>v+'ms'}},x:noGrid}}});
+
+mkChart('errorChart',{type:'doughnut',data:{
+  labels:['LLM timeout','API catálogo stale','Clarificación no resuelta','Fallback semántico','Error de integración'],
+  datasets:[{data:[38,24,18,14,6],backgroundColor:[COLORS.red,COLORS.orange,COLORS.blue,COLORS.gray,COLORS.purple],borderWidth:2,borderColor:'#fff'}]
+},options:{responsive:true,plugins:{legend:{position:'bottom',labels:{font:{size:11}}}},cutout:'55%'}});
+
+const matchBars = [
+  {cat:'Bebidas',val:94,color:COLORS.green},
+  {cat:'Almacén',val:91,color:COLORS.green},
+  {cat:'Lácteos',val:88,color:COLORS.green},
+  {cat:'Limpieza',val:86,color:COLORS.blue},
+  {cat:'Snacks',val:83,color:COLORS.blue},
+  {cat:'Carnes',val:78,color:COLORS.orange},
+  {cat:'Verdulería',val:71,color:COLORS.orange},
+  {cat:'Dietéticos',val:62,color:COLORS.red},
+];
+$('matchBarsDiv').innerHTML = matchBars.map(b=>`
+<div style="margin-bottom:11px;display:flex;align-items:center;gap:10px">
+  <span style="font-size:12px;min-width:90px">${b.cat}</span>
+  <div class="prog-bar" style="height:8px"><div class="prog-fill" style="width:${b.val}%;background:${b.color}"></div></div>
+  <span style="font-size:12px;font-weight:700;color:${b.color};min-width:34px">${b.val}%</span>
+</div>`).join('');
+
+const volumeHours = [];
+for(let d=0;d<2;d++) for(let h=0;h<24;h++) volumeHours.push(d===0?h+'h (ayer)':`${h}h`);
+const volumeData = [12,8,6,5,5,6,14,38,82,104,118,122,110,98,101,108,124,142,136,118,94,68,40,22,10,7,5,4,4,7,18,42,88,112,124,128,115,102,106,114,128,148,141,122,98,72,44,24];
+mkChart('volumeChart',{type:'bar',data:{
+  labels: volumeHours,
+  datasets:[{label:'Sesiones/hora',data:volumeData,backgroundColor:volumeData.map((v,i)=>i>=24?COLORS.accent+'cc':COLORS.accentA.replace('.15','.4')),borderRadius:3}]
+},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{...noGrid,ticks:{maxTicksLimit:12,font:{size:10}}},y:noGrid}}});
+</script>
+
+<script>
+// ── Login ─────────────────────────────────────────────────────────────────────
+(function() {
+  const screen = document.getElementById('login-screen');
+  const form   = document.getElementById('login-form');
+  const errEl  = document.getElementById('login-error');
+
+  // Keep logged-in state for the session
+  if (sessionStorage.getItem('ss_auth') === '1') {
+    screen.classList.add('hidden');
+  }
+
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const user = document.getElementById('login-user').value.trim();
+    const pass = document.getElementById('login-pass').value;
+    if (user === 'admin1' && pass === 'admin1') {
+      sessionStorage.setItem('ss_auth', '1');
+      screen.classList.add('hidden');
+      errEl.classList.remove('show');
+    } else {
+      errEl.classList.add('show');
+      document.getElementById('login-pass').value = '';
+      document.getElementById('login-pass').focus();
+    }
+  });
+})();
+</script>
+</body>
+</html>
