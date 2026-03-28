@@ -2,6 +2,23 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Juan — V2 bug fixes: cosine similarity, eval harness robustness
+
+**Type:** decision
+
+Fixed critical bug in `_cosine()` in `product_semantic_index.py`: was returning raw dot product instead of true cosine similarity, causing magnitude-biased rankings. Fixed by dividing by `norm_a * norm_b`. Fixed eval harness silent-pass bug: `_llm_judge()` now returns `passed=False` on API errors instead of silently passing. Added `min_cart_size` and `expected_min_quantity` fields to `Scenario` dataclass — `v1_exact_product` and `v1_quantity` now actually validate cart contents instead of passing unconditionally. Strict verdict parsing (`^PASS:|^FAIL:` regex) and product names in judge prompt also added. 27 tests passing.
+
+---
+
+## 2026-03-27 — Juan — V2 semantic search, find_alternatives, eval harness expansion
+
+**Type:** feature
+
+Upgraded `search()` in `product_semantic_index.py` to hybrid semantic + keyword retrieval using sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`); falls back to keyword filter when index is absent. Added `find_alternatives(query, catalog, category, top_k)` for stock-aware substitution with category-first, then cross-category fallback. Added module-level model and index caching. Expanded `llm_eval_harness.py` with V2 scenarios (`v2_broad_query`, `v2_out_of_stock_substitution`), LLM judge via gpt-4o-mini for v2-tagged scenarios, and `--no-llm-judge` flag in runner for CI. 28 tests passing.
+
+---
+
+## 2026-03-27 — Nacho — VERSION2: preferences persistence + chat context assembly
 ## 2026-03-28 — Jeremias — Agent weakness fixes landed and chat contract documented
 
 **Type:** api
