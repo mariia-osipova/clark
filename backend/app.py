@@ -298,6 +298,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             _log.warning("chat [%s] bad request: %s", req_id, err)
             self.send_json(envelope(error=err, request_id=req_id), 400)
             return
+        session_id = str(body.get("session_id", "") or "")
+        action = str(body.get("action", "") or "")
         try:
             from backend.chat_agent_agentic import handle_chat
             _log.info("chat [%s] message=%r clarification=%s", req_id, message[:60], clarification_response is not None)
@@ -307,6 +309,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 cart=cart,
                 clarification_response=clarification_response,
                 context=_assemble_chat_context(),
+                session_id=session_id,
             )
             _log.info("chat [%s] ok cart_items=%d clarification=%s", req_id, len(result.get("cart") or []), result.get("clarification") is not None)
             self.send_json(envelope(data=result, request_id=req_id))

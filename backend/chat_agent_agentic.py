@@ -353,6 +353,7 @@ def handle_chat(
     cart: list[dict],
     clarification_response: dict | None = None,
     context: str | None = None,
+    session_id: str = "",
 ) -> dict[str, Any]:
     """
     Process a chat turn and return:

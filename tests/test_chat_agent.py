@@ -409,6 +409,24 @@ class TestHandleChat:
         assert "cart" in result
         assert "clarification" in result
 
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_handle_chat_accepts_session_id(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        from backend.chat_agent_agentic import handle_chat, _reset_app_cache
+        _reset_app_cache()
+        mock_load_catalog.return_value = sample_catalog
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = {
+            "messages": [LCAIMessage(content="Hola")],
+            "result_cart": None,
+            "clarification": None,
+            "missing_items": [],
+        }
+        mock_build_graph.return_value = mock_app
+        # Should not raise; session_id is accepted as a keyword arg
+        result = handle_chat(message="hola", history=[], cart=[], session_id="sess-abc")
+        assert result["reply"] == "Hola"
+
 
 class TestAgenticLoop:
     """
