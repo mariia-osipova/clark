@@ -346,6 +346,7 @@ async function resolveClarification() {
         clarification_response: {
           pending_request_id: state.clarification.pending_request_id,
           chosen_option_id: state.clarification.selectedOptionId,
+          pending_message: state.clarification.pending_message || '',
         },
       }),
     });

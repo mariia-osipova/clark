@@ -277,13 +277,34 @@ def _build_graph(catalog: list[dict], api_key: str):
             elif tc["name"] == "search_products":
                 parsed = json.loads(result)
                 if isinstance(parsed, list):
-                    options = build_clarification_candidates(parsed)
-                    if options:
-                        clarification = {
-                            "question": "Encontré varias opciones. ¿Cuál preferís?",
-                            "options": options,
-                            "pending_request_id": str(uuid.uuid4()),
-                        }
+                    in_cart_ids = {item.get("product_id") for item in (result_cart or [])}
+                    already_covered = any(p.get("id") in in_cart_ids for p in parsed)
+                    if already_covered:
+                        # Product already resolved and in cart — replace the tool
+                        # result so the LLM never sees the raw product list and
+                        # won't independently pick or duplicate items from it.
+                        new_messages[-1] = ToolMessage(
+                            content=json.dumps({
+                                "note": "Este producto ya está en el carrito. No es necesario buscarlo de nuevo."
+                            }),
+                            tool_call_id=tc["id"],
+                        )
+                    else:
+                        options = build_clarification_candidates(parsed)
+                        if options:
+                            # Capture the original user message so the backend can
+                            # continue processing after the user resolves this choice.
+                            pending_message = ""
+                            for msg in reversed(state["messages"]):
+                                if isinstance(msg, HumanMessage):
+                                    pending_message = msg.content
+                                    break
+                            clarification = {
+                                "question": "Encontré varias opciones. ¿Cuál preferís?",
+                                "options": options,
+                                "pending_request_id": str(uuid.uuid4()),
+                                "pending_message": pending_message,
+                            }
             elif tc["name"] == "request_clarification":
                 parsed = json.loads(result)
                 clarification = {
@@ -358,31 +379,77 @@ def handle_chat(
     if context:
         init_messages.append(SystemMessage(content=context))
 
-    clarification_resolved_product = None
     if clarification_response:
         chosen_id = clarification_response.get("chosen_option_id", "")
-        pending_id = clarification_response.get("pending_request_id", "")
         product = next((p for p in _catalog if p.get("id") == chosen_id), None)
         if product:
-            clarification_resolved_product = product
-            details = ", ".join(filter(None, [
-                f"nombre={product['name']}",
-                f"marca={product.get('brand', '')}",
-                f"tamaño={product.get('package_size', '')}",
-                f"precio=${float(product['price']):.2f}",
-                f"product_id={product['id']}",
+            # ── Short-circuit: add resolved product directly, bypass LLM ──────
+            new_items = list(cart) + [{"product_id": product["id"], "quantity": 1}]
+            validated_cart, _ = _validate_cart_with_report(new_items, _catalog)
+
+            pending_msg = clarification_response.get("pending_message", "").strip()
+
+            if not pending_msg:
+                # Single-item request fully resolved — return immediately.
+                product_label = " ".join(filter(None, [
+                    product.get("name", ""), product.get("package_size", ""),
+                ]))
+                return {
+                    "reply": f"Listo, agregué {product_label} al carrito.",
+                    "cart": validated_cart,
+                    "clarification": None,
+                    "missing_items": [],
+                }
+
+            # Multi-item request: continue processing the rest of the original
+            # message.  Inject the resolved product into cart state and re-run
+            # the graph with the original pending message so the agent handles
+            # remaining items without re-searching the one just resolved.
+            product_label = " ".join(filter(None, [
+                product.get("name", ""), product.get("package_size", ""),
             ]))
-            clarification_context = (
-                f"El usuario eligió la opción para la solicitud pendiente {pending_id}. "
-                f"Detalles del producto elegido: {details}. "
-                "Llamá a set_cart directamente con este product_id. No vuelvas a buscar."
+            cont_messages: list = [SystemMessage(content=_build_system_prompt())]
+            if validated_cart:
+                cart_lines = "\n".join(
+                    f"- {i.get('name')} x{i.get('quantity')} ${i.get('price', 0):.2f}"
+                    for i in validated_cart
+                )
+                cont_messages.append(SystemMessage(content=f"Carrito actual:\n{cart_lines}"))
+            if context:
+                cont_messages.append(SystemMessage(content=context))
+            cont_messages.append(SystemMessage(content=(
+                f"Ya resolviste la ambigüedad: el usuario eligió '{product_label}' "
+                f"(product_id={product['id']}) y fue agregado al carrito. "
+                "Continuá procesando el pedido original. "
+                "No vuelvas a buscar ese producto."
+            )))
+            cont_messages.append(HumanMessage(content=pending_msg))
+
+            cont_state = app.invoke(
+                {
+                    "messages": cont_messages,
+                    "result_cart": validated_cart,
+                    "clarification": None,
+                    "missing_items": [],
+                },
+                config={"recursion_limit": 30},
             )
-        else:
-            clarification_context = (
-                f"El usuario eligió la opción: {chosen_id} "
-                f"para la solicitud pendiente: {pending_id}"
-            )
-        init_messages.append(SystemMessage(content=clarification_context))
+
+            last_msg = cont_state["messages"][-1]
+            cont_clar = cont_state.get("clarification")
+            if isinstance(last_msg, AIMessage) and last_msg.content:
+                reply = last_msg.content
+            elif cont_clar:
+                reply = cont_clar.get("question", "Necesito una aclaración para continuar.")
+            else:
+                reply = f"Listo, agregué {product_label} al carrito."
+
+            return {
+                "reply": reply,
+                "cart": cont_state.get("result_cart") or validated_cart,
+                "clarification": cont_clar,
+                "missing_items": cont_state.get("missing_items") or [],
+            }
 
     for msg in _trim_history(history):
         if msg["role"] == "user":
@@ -390,13 +457,7 @@ def handle_chat(
         elif msg["role"] == "assistant":
             init_messages.append(AIMessage(content=msg["content"]))
 
-    # When the user resolved a clarification by picking a known product, the
-    # frontend sends the option label as the message text.  That long product
-    # name would be treated as a new search query, re-triggering the
-    # clarification loop.  Replace it with a neutral confirmation so the agent
-    # focuses on the system-level set_cart instruction above.
-    effective_message = "Confirmado." if clarification_resolved_product else message
-    init_messages.append(HumanMessage(content=effective_message))
+    init_messages.append(HumanMessage(content=message))
 
     final_state = app.invoke(
         {

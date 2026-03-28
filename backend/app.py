@@ -120,7 +120,11 @@ def _validate_clarification_response(raw) -> dict | None:
     if not isinstance(cid, str) or not cid.strip():
         _log.warning("clarification_response missing valid chosen_option_id, ignoring")
         return None
-    return {"pending_request_id": pid.strip(), "chosen_option_id": cid.strip()}
+    result = {"pending_request_id": pid.strip(), "chosen_option_id": cid.strip()}
+    pending_msg = raw.get("pending_message")
+    if isinstance(pending_msg, str) and pending_msg.strip():
+        result["pending_message"] = pending_msg.strip()
+    return result
 
 
 def _validate_chat_body(body: dict) -> tuple:

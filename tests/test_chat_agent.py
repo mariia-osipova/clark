@@ -283,76 +283,74 @@ class TestHandleChat:
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
-    def test_clarification_response_injects_product_details(self, mock_build_graph, mock_load_catalog, sample_catalog):
-        """When clarification_response resolves to a known product_id, the agent
-        receives product details (name, brand, size, price, product_id) and an
-        explicit set_cart instruction — no re-search needed."""
+    def test_clarification_resolution_bypasses_llm_and_adds_to_cart(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        """When clarification_response resolves to a known product_id with no
+        pending_message, the cart is updated directly without invoking the graph."""
         mock_load_catalog.return_value = sample_catalog
         mock_app = MagicMock()
-        mock_app.invoke.return_value = _make_graph_state(reply="Listo, agregué la leche.")
         mock_build_graph.return_value = mock_app
 
-        handle_chat(
+        result = handle_chat(
             "Leche entera La Serenísima",
             [],
             [],
             clarification_response={"pending_request_id": "pending-1", "chosen_option_id": "p1"},
         )
 
-        state = mock_app.invoke.call_args.args[0]
-        contents = [getattr(m, "content", "") for m in state["messages"]]
-        injected = next((c for c in contents if "product_id=p1" in c), None)
-        assert injected is not None, "Expected product details injected into messages"
-        assert "nombre=Leche entera La Serenísima" in injected
-        assert "set_cart" in injected
+        mock_app.invoke.assert_not_called()
+        assert result["clarification"] is None
+        assert any(item["product_id"] == "p1" for item in (result["cart"] or []))
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
-    def test_clarification_response_uses_neutral_message_not_label(self, mock_build_graph, mock_load_catalog, sample_catalog):
-        """When clarification resolves to a known product, the HumanMessage sent
-        to the agent must be a neutral confirmation ('Confirmado.'), NOT the
-        product label.  Sending the label causes the agent to re-search and
-        re-trigger the clarification loop."""
+    def test_clarification_resolution_continues_with_pending_message(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        """When clarification_response includes a pending_message, the graph is
+        re-invoked with the original request so remaining items are processed."""
         mock_load_catalog.return_value = sample_catalog
         mock_app = MagicMock()
-        mock_app.invoke.return_value = _make_graph_state(reply="Listo.")
+        mock_app.invoke.return_value = _make_graph_state(reply="También agregué el yogur.")
         mock_build_graph.return_value = mock_app
 
-        # Frontend sends the option label as the message text
         handle_chat(
-            "Leche entera La Serenísima 1L",   # product label from the modal
+            "Leche entera La Serenísima",
             [],
             [],
-            clarification_response={"pending_request_id": "pending-1", "chosen_option_id": "p1"},
+            clarification_response={
+                "pending_request_id": "pending-1",
+                "chosen_option_id": "p1",
+                "pending_message": "quiero leche y yogur",
+            },
         )
 
+        mock_app.invoke.assert_called_once()
         state = mock_app.invoke.call_args.args[0]
+        # p1 (leche) must already be in the cart passed to the continuation
+        assert any(item.get("product_id") == "p1" for item in state["result_cart"])
+        # The continuation message must be the original pending request
         human_messages = [m for m in state["messages"] if isinstance(m, LCHumanMessage)]
-        last_human = human_messages[-1].content
-        assert last_human == "Confirmado.", (
-            f"Expected neutral 'Confirmado.' but got {last_human!r}. "
-            "Sending the product label causes a re-search loop."
-        )
+        assert human_messages[-1].content == "quiero leche y yogur"
+        # A system message must note what was already resolved
+        all_contents = [getattr(m, "content", "") for m in state["messages"]]
+        assert any("p1" in c for c in all_contents)
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
-    def test_clarification_response_unknown_id_falls_back_gracefully(self, mock_build_graph, mock_load_catalog, sample_catalog):
-        """Unknown chosen_option_id falls back to a plain message without crashing."""
+    def test_clarification_response_unknown_id_falls_back_to_graph(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        """Unknown chosen_option_id falls through to normal graph invocation without crashing."""
         mock_load_catalog.return_value = sample_catalog
         mock_app = MagicMock()
         mock_app.invoke.return_value = _make_graph_state(reply="ok")
         mock_build_graph.return_value = mock_app
 
-        handle_chat(
+        result = handle_chat(
             "algo",
             [],
             [],
             clarification_response={"pending_request_id": "pending-1", "chosen_option_id": "nonexistent"},
         )
 
-        state = mock_app.invoke.call_args.args[0]
-        contents = [getattr(m, "content", "") for m in state["messages"]]
-        assert any("nonexistent" in c for c in contents)
+        mock_app.invoke.assert_called_once()
+        assert result["reply"] == "ok"
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
@@ -885,6 +883,79 @@ class TestCleanups:
         option_ids = {opt["id"] for opt in result["clarification"]["options"]}
         assert "milk-1" in option_ids
         assert "milk-2" in option_ids
+
+    @patch("backend.product_semantic_index.search")
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_search_result_already_in_cart_returns_neutral_tool_message(
+        self, mock_load_catalog, mock_llm_cls, mock_search
+    ):
+        """
+        When search_products returns candidates that include a product already in
+        result_cart, tools_node must replace the ToolMessage with a 'already in cart'
+        note so the LLM cannot independently pick and duplicate that product.
+        """
+        ambiguous_catalog = [
+            {
+                "id": "cook-1",
+                "name": "Galletitas Oreo",
+                "brand": "Oreo",
+                "package_size": "118g",
+                "price": 400.0,
+                "discount_pct": 0,
+                "available_quantity": 10,
+                "image_url": "",
+            },
+            {
+                "id": "cook-2",
+                "name": "Galletitas Pepitos",
+                "brand": "Pepitos",
+                "package_size": "150g",
+                "price": 350.0,
+                "discount_pct": 0,
+                "available_quantity": 8,
+                "image_url": "",
+            },
+        ]
+        mock_load_catalog.return_value = ambiguous_catalog
+        mock_search.return_value = ambiguous_catalog
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        captured_tool_messages = []
+        call_count = [0]
+
+        def invoke_side_effect(messages):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return self._ai_with_tool_call("search_products", {"query": "galletitas"}, "c1")
+            # Second call: capture ToolMessages the LLM received
+            captured_tool_messages.extend(
+                m for m in messages if hasattr(m, "tool_call_id")
+            )
+            return self._ai_reply("Listo.")
+
+        llm.invoke.side_effect = invoke_side_effect
+        mock_llm_cls.return_value = llm
+
+        # Simulate the continuation path: user resolved cook-1 from a prior clarification
+        # and has a pending_message so the graph is re-invoked.
+        handle_chat(
+            "Galletitas Oreo",
+            [],
+            [],
+            clarification_response={
+                "pending_request_id": "p1",
+                "chosen_option_id": "cook-1",
+                "pending_message": "quiero galletitas",
+            },
+        )
+
+        assert captured_tool_messages, "LLM should have received a ToolMessage on the continuation"
+        tool_content = json.loads(captured_tool_messages[0].content)
+        assert "ya está en el carrito" in tool_content.get("note", ""), (
+            f"Expected 'already in cart' note but got: {tool_content}"
+        )
 
     @patch("backend.product_semantic_index.search")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
