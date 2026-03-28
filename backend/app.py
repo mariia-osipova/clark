@@ -20,6 +20,7 @@ from backend.db import (
     upsert_session_cart_item,
     remove_session_cart_item,
     place_order,
+    pending_clarification_exists,
     save_pending_clarification,
     resolve_pending_clarification,
 )
@@ -308,6 +309,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         """Hydrate server cart, add dropped_items, return final data dict.
         Catalog is passed in to avoid a second disk read (already loaded by the caller).
         """
+        result.pop("clarification_response_applied", None)
         if result.get("cart") is not None:
             server_cart = get_session_cart(session_id, catalog) if session_id else result["cart"]
             result["cart"] = server_cart
@@ -329,7 +331,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         # Phase 2: validate clarification_response against persisted state
         if clarification_response and session_id:
             pid = clarification_response["pending_request_id"]
-            if not resolve_pending_clarification(session_id, pid):
+            if not pending_clarification_exists(session_id, pid):
                 _log.warning("chat [%s] stale or unknown clarification pending_request_id=%r", req_id, pid)
                 self.send_json(envelope(error="stale or unknown clarification request", request_id=req_id), 400)
                 return
@@ -337,6 +339,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         try:
             _log.info("chat [%s] message=%r clarification=%s", req_id, message[:60], clarification_response is not None)
             result = self._dispatch_chat(message, history, cart, clarification_response, session_id, action, req_id)
+
+            if clarification_response and session_id and result.get("clarification_response_applied"):
+                pid = clarification_response["pending_request_id"]
+                if not resolve_pending_clarification(session_id, pid):
+                    _log.warning("chat [%s] clarification resolved concurrently pending_request_id=%r", req_id, pid)
+                    self.send_json(envelope(error="stale or unknown clarification request", request_id=req_id), 400)
+                    return
 
             # Phase 2: persist issued clarification
             clarification = result.get("clarification")

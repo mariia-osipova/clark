@@ -360,8 +360,8 @@ class TestHandleChat:
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
-    def test_clarification_response_unknown_id_falls_back_to_graph(self, mock_build_graph, mock_load_catalog, sample_catalog):
-        """Unknown chosen_option_id falls through to normal graph invocation without crashing."""
+    def test_clarification_response_unknown_id_is_rejected(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        """Unknown chosen_option_id is rejected without starting a fresh graph turn."""
         mock_load_catalog.return_value = sample_catalog
         mock_app = MagicMock()
         mock_app.invoke.return_value = _make_graph_state(reply="ok")
@@ -374,8 +374,8 @@ class TestHandleChat:
             clarification_response={"pending_request_id": "pending-1", "chosen_option_id": "nonexistent"},
         )
 
-        mock_app.invoke.assert_called_once()
-        assert result["reply"] == "ok"
+        mock_app.invoke.assert_not_called()
+        assert "ya no está disponible" in result["reply"].lower()
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
@@ -902,6 +902,96 @@ class TestBugFixes:
         cart = result.get("cart") or []
         assert not any(item.get("product_id") == "p2" for item in cart)
 
+    @patch("backend.chat_agent_agentic._read_session_cart")
+    @patch("backend.chat_agent_agentic._write_session_cart_item")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_clarification_resume_rehydrates_resolved_so_far_into_resolved_cart(
+        self, mock_build_graph, mock_load_catalog, mock_write_cart, mock_read_cart, sample_catalog
+    ):
+        """Resume input must carry forward already-resolved items into resolved_cart.
+
+        Otherwise apply_cart only persists the newly chosen option and any items
+        resolved after resume, dropping products resolved before the clarification.
+        """
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+        mock_load_catalog.return_value = sample_catalog
+        mock_read_cart.return_value = []
+
+        prior_resolved = {
+            "query": "yogur",
+            "status": "resolved",
+            "product": sample_catalog[1],
+            "quantity": 2,
+            "options": None,
+        }
+
+        mock_app = MagicMock()
+        mock_state = MagicMock()
+        mock_state.values = {
+            "pending_clarification": {
+                "options": [{"id": "p1", "label": "Leche entera La Serenísima"}],
+                "original_query": "leche",
+                "pending_message": "quiero leche y dos yogures",
+                "planned_items": [
+                    {"query": "leche", "quantity": 1},
+                    {"query": "yogur", "quantity": 2},
+                ],
+                "resolved_so_far": [prior_resolved],
+            }
+        }
+        mock_app.get_state.return_value = mock_state
+        mock_app.invoke.return_value = _make_graph_state(reply="Listo.")
+        mock_build_graph.return_value = mock_app
+
+        handle_chat(
+            "algo",
+            [],
+            [],
+            clarification_response={"pending_request_id": "req-1", "chosen_option_id": "p1"},
+            session_id="sess-resume",
+        )
+
+        resume_input = mock_app.invoke.call_args.args[0]
+        resolved_cart = resume_input["resolved_cart"]
+
+        assert any(item["product_id"] == "p2" and item["quantity"] == 2 for item in resolved_cart)
+        assert any(item["product_id"] == "p1" and item["quantity"] == 1 for item in resolved_cart)
+        _reset_app_cache()
+
+    @patch("backend.product_semantic_index.resolve_product")
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_single_item_chat_normalizes_quantity_with_parse_quantity(
+        self, mock_load_catalog, mock_llm_cls, mock_resolve, sample_catalog
+    ):
+        """Single-item turns must normalize quantity from the raw message.
+
+        This keeps quantity extraction deterministic even when the classifier
+        under-extracts or mis-extracts the count.
+        """
+        from backend.chat_agent_agentic import _reset_app_cache
+        _reset_app_cache()
+        mock_load_catalog.return_value = sample_catalog
+        mock_resolve.return_value = {
+            "status": "resolved", "product": sample_catalog[1], "quantity": 2,
+        }
+        llm = MagicMock()
+        llm.invoke.side_effect = [
+            MagicMock(content=json.dumps({
+                "turn_kind": "shopping",
+                "planned_items": [{"query": "yogur", "quantity": 1}],
+            })),
+            MagicMock(content="Agregué dos yogures."),
+        ]
+        mock_llm_cls.return_value = llm
+
+        handle_chat("agrega dos yogures", [], [])
+
+        mock_resolve.assert_called_once_with("yogur", 2, sample_catalog)
+        _reset_app_cache()
+
 
 # ─── Phase-based graph tests ──────────────────────────────────────────────────
 
@@ -954,7 +1044,7 @@ class TestPhaseGraph:
     def test_resolve_items_stops_at_first_clarification(
         self, mock_load_catalog, mock_llm_cls, mock_resolve, sample_catalog
     ):
-        """When first item needs clarification, second item is NOT attempted."""
+        """When one item needs clarification, the graph still resolves the rest."""
         mock_load_catalog.return_value = sample_catalog
         mock_resolve.return_value = {
             "status": "needs_clarification",
@@ -973,7 +1063,7 @@ class TestPhaseGraph:
 
         result = handle_chat("quiero leche y yogur", [], [])
 
-        assert mock_resolve.call_count == 1  # only "leche" attempted
+        assert mock_resolve.call_count == 2
         assert result["clarification"] is not None
         assert len(result["clarification"]["options"]) == 1
 

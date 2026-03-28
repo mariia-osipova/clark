@@ -250,6 +250,21 @@ def save_pending_clarification(
         conn.close()
 
 
+def pending_clarification_exists(session_id: str, pending_request_id: str) -> bool:
+    """Return True when a clarification exists and is still unresolved."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """SELECT 1
+               FROM pending_clarifications
+               WHERE session_id = ? AND pending_request_id = ? AND resolved_at IS NULL""",
+            (session_id, pending_request_id),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 def resolve_pending_clarification(session_id: str, pending_request_id: str) -> bool:
     """Mark a clarification as resolved atomically.
     Returns True only if the row existed and was previously unresolved.

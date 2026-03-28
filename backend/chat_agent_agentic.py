@@ -185,6 +185,36 @@ def _build_cart_item(product: dict, quantity: Any) -> dict:
     }
 
 
+def _normalize_planned_items(raw_message: str, planned_items: list[dict]) -> list[dict]:
+    """Coerce classifier output into stable query/quantity pairs.
+
+    For single-item turns, quantity comes from parse_quantity(raw_message) so the
+    chat path does not depend on the LLM getting the count exactly right.
+    """
+    from backend.product_semantic_index import parse_quantity
+
+    normalized: list[dict] = []
+    message_qty = parse_quantity(raw_message)
+    single_item = len(planned_items) == 1
+
+    for item in planned_items:
+        query = str(item.get("query", "") or "").strip()
+        if not query:
+            continue
+
+        try:
+            quantity = max(1, int(item.get("quantity", 1)))
+        except (TypeError, ValueError):
+            quantity = 1
+
+        if single_item:
+            quantity = message_qty
+
+        normalized.append({"query": query, "quantity": quantity})
+
+    return normalized
+
+
 def _validate_cart(items: list[dict], catalog: list[dict]) -> list[dict]:
     """Validate cart items against the catalog. Remove unknown or out-of-stock items."""
     catalog_by_id = {p["id"]: p for p in catalog}
@@ -406,9 +436,13 @@ def _build_graph(catalog: list[dict], api_key: str):
                 HumanMessage(content=user_content),
             ])
             parsed = json.loads(response.content)
+            planned_items = _normalize_planned_items(
+                raw,
+                parsed.get("planned_items", []),
+            )
             return {
                 "turn_kind": parsed.get("turn_kind", "smalltalk"),
-                "planned_items": parsed.get("planned_items", []),
+                "planned_items": planned_items,
             }
         except Exception:
             _log.exception("classify_turn failed, defaulting to smalltalk")
@@ -718,86 +752,105 @@ def handle_chat(
     if clarification_response:
         chosen_id = str(clarification_response.get("chosen_option_id", "") or "").strip()
         product = next((p for p in catalog if p.get("id") == chosen_id), None)
-        if product:
-            qty = 1
-            product_label = " ".join(filter(None, [product.get("name", ""), product.get("package_size", "")]))
+        qty = 1
 
-            # Retrieve the prior clarification state to validate the chosen option.
-            prior_clarification: dict = {}
-            if session_id:
-                try:
-                    prior_state = app.get_state(config)
-                    prior_clarification = prior_state.values.get("pending_clarification") or {}
+        # Retrieve the prior clarification state to validate the chosen option.
+        prior_clarification: dict = {}
+        if session_id:
+            try:
+                prior_state = app.get_state(config)
+                prior_clarification = prior_state.values.get("pending_clarification") or {}
+            except Exception:
+                prior_clarification = {}
 
-                    # Validate chosen_id against the options that were actually presented.
-                    prior_options = prior_clarification.get("options") or []
-                    valid_ids = {opt.get("id", "") for opt in prior_options}
-                    if valid_ids and chosen_id not in valid_ids:
-                        return {
-                            "reply": "Esa opción no es válida. Por favor elegí una de las opciones presentadas.",
-                            "cart": _read_session_cart(session_id, catalog),
-                            "clarification": prior_clarification if prior_clarification else None,
-                            "missing_items": [],
-                        }
-                except Exception:
-                    pass
+        prior_options = prior_clarification.get("options") or []
+        valid_ids = {opt.get("id", "") for opt in prior_options}
+        if valid_ids and chosen_id not in valid_ids:
+            return {
+                "reply": "Esa opción no es válida. Por favor elegí una de las opciones presentadas.",
+                "cart": _read_session_cart(session_id, catalog) if session_id else initial_cart,
+                "clarification": prior_clarification if prior_clarification else None,
+                "missing_items": [],
+                "clarification_response_applied": False,
+            }
 
-            if session_id:
-                _write_session_cart_item(session_id, chosen_id, qty)
+        if not product:
+            return {
+                "reply": "Esa opción ya no está disponible. Elegí otra alternativa.",
+                "cart": _read_session_cart(session_id, catalog) if session_id else initial_cart,
+                "clarification": prior_clarification if prior_clarification else None,
+                "missing_items": [],
+                "clarification_response_applied": False,
+            }
 
-                pending_message = prior_clarification.get("pending_message", "")
-                stored_planned_items = prior_clarification.get("planned_items") or []
-                resolved_so_far = prior_clarification.get("resolved_so_far") or []
+        product_label = " ".join(filter(None, [product.get("name", ""), product.get("package_size", "")]))
 
-                if pending_message and stored_planned_items:
-                    # Resume: inject chosen product + prior resolved items, then continue
-                    chosen_resolution = {
-                        "query": prior_clarification.get("original_query", chosen_id),
-                        "status": "resolved",
-                        "product": product,
-                        "quantity": qty,
-                        "options": None,
-                    }
-                    resume_input: dict = {
-                        "raw_message": pending_message,
-                        "turn_kind": "clarification_reply",
-                        "planned_items": stored_planned_items,
-                        "resolutions": list(resolved_so_far) + [chosen_resolution],
-                        "resolved_cart": [],
-                        "missing_items": [],
-                        "suggestions": [],
-                        "pending_clarification": None,
-                        "reply": "",
-                        "session_id": session_id,
-                        "initial_cart": initial_cart,
-                        "history": _trim_history(history),
-                        "context": context or "",
-                    }
-                    final_state = app.invoke(resume_input, config=config)
-                    return {
-                        "reply": final_state.get("reply", f"Listo, agregué {product_label} al carrito."),
-                        "cart": _read_session_cart(session_id, catalog),
-                        "clarification": final_state.get("pending_clarification"),
-                        "missing_items": final_state.get("missing_items") or [],
-                        "suggestions": final_state.get("suggestions") or [],
-                    }
+        if session_id:
+            _write_session_cart_item(session_id, chosen_id, qty)
+            pending_message = prior_clarification.get("pending_message", "")
+            stored_planned_items = prior_clarification.get("planned_items") or []
+            resolved_so_far = prior_clarification.get("resolved_so_far") or []
 
+            if pending_message and stored_planned_items:
+                # Resume: inject chosen product + prior resolved items, then continue
+                chosen_resolution = {
+                    "query": prior_clarification.get("original_query", chosen_id),
+                    "status": "resolved",
+                    "product": product,
+                    "quantity": qty,
+                    "options": None,
+                }
+                pre_resolved_cart = [
+                    _build_cart_item(resolution["product"], resolution.get("quantity", 1))
+                    for resolution in resolved_so_far
+                    if resolution.get("status") == "resolved" and resolution.get("product")
+                ]
+                pre_resolved_cart.append(_build_cart_item(product, qty))
+                resume_input: dict = {
+                    "raw_message": pending_message,
+                    "turn_kind": "clarification_reply",
+                    "planned_items": stored_planned_items,
+                    "resolutions": list(resolved_so_far) + [chosen_resolution],
+                    "resolved_cart": pre_resolved_cart,
+                    "missing_items": [],
+                    "suggestions": [],
+                    "pending_clarification": None,
+                    "reply": "",
+                    "session_id": session_id,
+                    "initial_cart": initial_cart,
+                    "history": _trim_history(history),
+                    "context": context or "",
+                }
+                final_state = app.invoke(resume_input, config=config)
                 return {
-                    "reply": f"Listo, agregué {product_label} al carrito.",
+                    "reply": final_state.get("reply", f"Listo, agregué {product_label} al carrito."),
                     "cart": _read_session_cart(session_id, catalog),
-                    "clarification": None,
-                    "missing_items": [],
+                    "clarification": final_state.get("pending_clarification"),
+                    "missing_items": final_state.get("missing_items") or [],
+                    "suggestions": final_state.get("suggestions") or [],
+                    "clarification_response_applied": True,
                 }
-            else:
-                # Stateless: update local cart and return confirmation.
-                new_cart = _upsert_local_cart_item(initial_cart, chosen_id, qty, catalog)
-                validated_cart, _ = _validate_cart_with_report(new_cart, catalog)
-                return {
-                    "reply": f"Listo, agregué {product_label} al carrito.",
-                    "cart": validated_cart,
-                    "clarification": None,
-                    "missing_items": [],
-                }
+
+            return {
+                "reply": f"Listo, agregué {product_label} al carrito.",
+                "cart": _read_session_cart(session_id, catalog),
+                "clarification": None,
+                "missing_items": [],
+                "suggestions": [],
+                "clarification_response_applied": True,
+            }
+
+        # Stateless: update local cart and return confirmation.
+        new_cart = _upsert_local_cart_item(initial_cart, chosen_id, qty, catalog)
+        validated_cart, _ = _validate_cart_with_report(new_cart, catalog)
+        return {
+            "reply": f"Listo, agregué {product_label} al carrito.",
+            "cart": validated_cart,
+            "clarification": None,
+            "missing_items": [],
+            "suggestions": [],
+            "clarification_response_applied": True,
+        }
 
     # ── Normal turn ────────────────────────────────────────────────────────────
     invoke_input: dict = {

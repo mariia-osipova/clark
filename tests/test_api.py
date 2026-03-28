@@ -378,8 +378,8 @@ class TestChatEndpoint:
         clarification = {
             "question": "¿Cuál leche querés?",
             "options": [
-                {"id": "opt1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]},
-                {"id": "opt2", "label": "Yogur frutilla Danone", "product": sample_catalog[1]},
+                {"id": "p1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]},
+                {"id": "p2", "label": "Yogur frutilla Danone", "product": sample_catalog[1]},
             ],
             "pending_request_id": "pending-1",
         }
@@ -415,7 +415,7 @@ class TestChatEndpoint:
                     "cart": [],
                     "clarification_response": {
                         "pending_request_id": "pending-1",
-                        "chosen_option_id": "opt1",
+                        "chosen_option_id": "p1",
                     },
                 },
             )
@@ -478,6 +478,69 @@ class TestChatEndpoint:
         assert second["data"]["cart"][0]["product_id"] == "p1"
         # Clarification resolution no longer re-invokes the graph (loop fix).
         assert mock_app.invoke.call_count == 1
+
+    def test_invalid_clarification_reply_does_not_consume_pending_request(self, test_server, sample_catalog):
+        from backend.chat_agent_agentic import _reset_app_cache
+
+        _reset_app_cache()
+        clarification = {
+            "question": "¿Cuál leche querés?",
+            "options": [
+                {"id": "p1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]},
+            ],
+            "pending_request_id": "pending-1",
+        }
+        pending_state = MagicMock()
+        pending_state.values = {"pending_clarification": clarification}
+
+        mock_app = MagicMock()
+        mock_app.get_state.return_value = pending_state
+        mock_app.invoke.return_value = _graph_state(reply="¿Cuál leche querés?", clarification=clarification)
+
+        import backend.app as app_module
+        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), \
+             patch("backend.chat_agent_agentic._build_graph", return_value=mock_app), \
+             patch.object(app_module, "_load_catalog", return_value=sample_catalog):
+            first, status1 = _post(
+                f"{test_server}/api/v1/chat",
+                {"message": "quiero leche", "history": [], "cart": []},
+                headers={"X-Session-Token": "sess-invalid-clar"},
+            )
+            invalid, status2 = _post(
+                f"{test_server}/api/v1/chat",
+                {
+                    "message": "otra cualquiera",
+                    "history": [{"role": "assistant", "content": first["data"]["reply"]}],
+                    "cart": [],
+                    "clarification_response": {
+                        "pending_request_id": "pending-1",
+                        "chosen_option_id": "p2",
+                    },
+                },
+                headers={"X-Session-Token": "sess-invalid-clar"},
+            )
+            valid, status3 = _post(
+                f"{test_server}/api/v1/chat",
+                {
+                    "message": "Leche entera La Serenísima 1L",
+                    "history": [{"role": "assistant", "content": first["data"]["reply"]}],
+                    "cart": [],
+                    "clarification_response": {
+                        "pending_request_id": "pending-1",
+                        "chosen_option_id": "p1",
+                    },
+                },
+                headers={"X-Session-Token": "sess-invalid-clar"},
+            )
+
+        assert status1 == 200
+        assert status2 == 200
+        assert status3 == 200
+        assert invalid["data"]["clarification"]["pending_request_id"] == "pending-1"
+        assert "no es válida" in invalid["data"]["reply"].lower()
+        assert valid["data"]["clarification"] is None
+        assert valid["data"]["cart"][0]["product_id"] == "p1"
+        _reset_app_cache()
 
 
 # ─── Unit: chat context assembly ─────────────────────────────────────────────
