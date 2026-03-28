@@ -117,12 +117,10 @@ def _post(url: str, body: dict, headers: dict | None = None) -> tuple[dict, int]
 
 
 def _graph_state(reply="ok", result_cart=None, clarification=None):
-    from langchain_core.messages import AIMessage
-
     return {
-        "messages": [AIMessage(content=reply)],
-        "result_cart": result_cart,
-        "clarification": clarification,
+        "reply": reply,
+        "resolved_cart": result_cart,
+        "pending_clarification": clarification,
         "missing_items": [],
     }
 

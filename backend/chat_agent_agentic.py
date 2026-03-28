@@ -16,19 +16,16 @@ import os
 import sqlite3
 import uuid
 from pathlib import Path
-from typing import Any, Annotated
+from typing import Any
 
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
     SystemMessage,
-    ToolMessage,
 )
 from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
-from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END
-from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 _log = logging.getLogger(__name__)
@@ -99,12 +96,26 @@ def _reset_app_cache() -> None:
 
 # ─── State ────────────────────────────────────────────────────────────────────
 
-class AgentState(TypedDict):
-    messages: Annotated[list, add_messages]
-    result_cart: list[dict] | None
-    clarification: dict | None
+class ShopState(TypedDict):
+    # Per-turn input — set by handle_chat before invoke
+    raw_message: str
+    session_id: str
+    initial_cart: list[dict]
+    history: list[dict]
+    context: str
+
+    # Classification output
+    turn_kind: str          # "shopping" | "smalltalk" | "monthly_basket" | "clarification_reply"
+    planned_items: list     # [{"query": str, "quantity": int}]
+
+    # Resolution output
+    resolutions: list       # [{"query", "status", "product"|None, "options"|None, "quantity"}]
+    resolved_cart: list     # _build_cart_item dicts — written to DB by apply_cart
+
+    # Per-turn output
     missing_items: list[str]
-    resolved_queries: dict  # query_text → product dict, prevents re-triggering clarification
+    pending_clarification: dict | None   # issued to client; persisted in SqliteSaver
+    reply: str
 
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
@@ -317,293 +328,201 @@ def _read_session_cart(session_id: str, catalog: list[dict]) -> list[dict]:
     return result
 
 
-# ─── Tool implementations ─────────────────────────────────────────────────────
-
-def _make_tools(catalog: list[dict]):
-    """Return LangChain tool objects closed over the catalog.
-    Session-specific side effects (DB writes) are handled in tools_node, not here."""
-
-    @tool
-    def resolve_product(query: str, quantity: int = 1) -> str:
-        """Resolve a single product from a natural-language query.
-        Returns a verdict dict: {status, product, quantity} or {status, options, quantity}.
-        Route based on status: resolved → add_to_cart; needs_clarification → request_clarification; not_found → report_missing."""
-        from backend.product_semantic_index import resolve_product as _resolve
-        verdict = _resolve(query, quantity, catalog)
-        return json.dumps(verdict)
-
-    @tool
-    def add_to_cart(product_id: str, quantity: int = 1) -> str:
-        """Validate and stage one item for the cart.
-        product_id must come from a resolve_product verdict with status=resolved.
-        quantity must be a positive integer."""
-        catalog_by_id = {p["id"]: p for p in catalog}
-        p = catalog_by_id.get(product_id)
-        if not p:
-            return json.dumps({"added": False, "error": "product not found"})
-        if p.get("available_quantity", 1) <= 0:
-            return json.dumps({"added": False, "error": "out of stock"})
-        qty = max(1, int(quantity))
-        return json.dumps({
-            "added": True,
-            "product_id": product_id,
-            "name": p.get("name", ""),
-            "quantity": qty,
-            "price": p["price"],
-        })
-
-    @tool
-    def request_clarification(question: str, options: list[dict]) -> str:
-        """Ask the user to choose between ambiguous product options before proceeding.
-        Returns acknowledgement and the pending request id."""
-        pending_id = str(uuid.uuid4())
-        return json.dumps({
-            "acknowledged": True,
-            "pending_request_id": pending_id,
-            "question": question,
-            "options": options,
-        })
-
-    @tool
-    def report_missing(ingredient: str) -> str:
-        """Record an ingredient or product that could not be found in the catalog."""
-        return json.dumps({"recorded": True, "ingredient": ingredient})
-
-    return [resolve_product, add_to_cart, request_clarification, report_missing]
-
-
-# ─── Reply extraction helper ──────────────────────────────────────────────────
-
-def _extract_reply(state: dict, fallback_label: str | None = None) -> str:
-    for msg in reversed(state.get("messages", [])):
-        if isinstance(msg, AIMessage) and msg.content:
-            return msg.content
-    clarification = state.get("clarification")
-    if clarification:
-        return clarification.get("question", "Necesito una aclaración para continuar.")
-    if fallback_label:
-        return f"Listo, agregué {fallback_label} al carrito."
-    return "Lo siento, no pude completar la acción."
-
-
 # ─── Graph ────────────────────────────────────────────────────────────────────
 
+_CLASSIFY_SYSTEM = (
+    "Sos un asistente de compras. Analizá el mensaje del usuario y respondé SOLO con JSON:\n"
+    '{"turn_kind": "shopping|smalltalk|monthly_basket", '
+    '"planned_items": [{"query": "nombre producto", "quantity": 1}]}\n'
+    "Para mensajes que NO son compras (saludos, preguntas generales), usá turn_kind=smalltalk "
+    "y planned_items=[].\n"
+    'Para generar canasta mensual, usá turn_kind=monthly_basket y planned_items=[].\n'
+    "Extraé un ítem por producto mencionado. Resolvé números en español (dos→2, tres→3, un→1).\n"
+    "SOLO JSON, sin markdown ni texto adicional."
+)
+
+
 def _build_graph(catalog: list[dict], api_key: str):
-    """Compile and return a LangGraph graph with SqliteSaver checkpointer."""
-    tools = _make_tools(catalog)
+    """Compile phase-based graph: classify → resolve → apply/clarify → summarize."""
+    from backend.product_semantic_index import resolve_product as _resolve_product
+
     llm = ChatOpenAI(
         model="gpt-4o-mini",
         temperature=0,
         api_key=api_key,
         timeout=30,
-    ).bind_tools(tools)
+    )
 
-    tools_by_name = {t.name: t for t in tools}
+    # ── Node: classify_turn ────────────────────────────────────────────────────
+    def classify_turn(state: ShopState) -> dict:
+        """LLM classifies intent and extracts planned items in one structured call."""
+        if state.get("turn_kind") == "clarification_reply":
+            return {}  # pre-set by handle_chat; skip re-classification
 
-    def agent_node(state: AgentState) -> dict:
-        messages = state["messages"]
-        # Keep all SystemMessages plus the last 30 non-system messages to avoid
-        # blowing the context window on long clarification chains.
-        system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
-        non_system = [m for m in messages if not isinstance(m, SystemMessage)]
-        trimmed = system_msgs + non_system[-30:]
-        response = llm.invoke(trimmed)
-        return {"messages": [response]}
+        raw = state.get("raw_message", "")
+        history = state.get("history") or []
 
-    def tools_node(state: AgentState, config: RunnableConfig) -> dict:
-        session_id = (config.get("configurable") or {}).get("session_id", "")
-        last_msg = state["messages"][-1]
+        history_text = ""
+        for msg in history[-6:]:
+            role = "Usuario" if msg.get("role") == "user" else "Asistente"
+            history_text += f"{role}: {msg.get('content', '')}\n"
+
+        user_content = f"Historial:\n{history_text}\nMensaje: {raw}" if history_text else f"Mensaje: {raw}"
+        if state.get("context"):
+            user_content = f"Contexto: {state['context']}\n{user_content}"
+
+        try:
+            response = llm.invoke([
+                SystemMessage(content=_CLASSIFY_SYSTEM),
+                HumanMessage(content=user_content),
+            ])
+            parsed = json.loads(response.content)
+            return {
+                "turn_kind": parsed.get("turn_kind", "smalltalk"),
+                "planned_items": parsed.get("planned_items", []),
+            }
+        except Exception:
+            _log.exception("classify_turn failed, defaulting to smalltalk")
+            return {"turn_kind": "smalltalk", "planned_items": []}
+
+    # ── Node: resolve_items ────────────────────────────────────────────────────
+    def resolve_items(state: ShopState) -> dict:
+        """Deterministic: call resolve_product() for each planned item not yet resolved."""
+        resolutions = list(state.get("resolutions") or [])
+        resolved_cart = list(state.get("resolved_cart") or [])
         missing_items = list(state.get("missing_items") or [])
-        result_cart = list(state.get("result_cart") or [])
-        clarification = state.get("clarification")
 
-        catalog_by_id = {p["id"]: p for p in catalog}
-        pending_message = next(
-            (str(m.content) for m in reversed(state["messages"]) if isinstance(m, HumanMessage)),
-            "",
-        )
-        resolved_queries: dict = dict(state.get("resolved_queries") or {})
+        already_resolved = {r["query"] for r in resolutions}
 
-        # Pass 1: execute ALL tool calls in original order.
-        # For add_to_cart calls, if the product_id was not verified by a resolve_product
-        # call earlier in the same batch, run a clarification pre-check first so the LLM
-        # cannot bypass the ambiguity gate by calling add_to_cart directly.
-        tool_results: list[tuple[dict, str]] = []
-        resolved_this_batch: dict[str, dict] = {}  # pid → product dict
-        last_resolve_query: str = ""  # last resolve_product query in this batch
-
-        for tc in last_msg.tool_calls:
-            tool_fn = tools_by_name.get(tc["name"])
-            if tool_fn is None:
-                tool_results.append((tc, json.dumps({"error": f"unknown tool: {tc['name']}"})))
+        for item in state.get("planned_items") or []:
+            query = item["query"]
+            if query in already_resolved:
                 continue
+            qty = item.get("quantity", 1)
 
-            if tc["name"] == "add_to_cart":
-                pid = str(tc["args"].get("product_id", ""))
-                qty = tc["args"].get("quantity", 1)
+            verdict = _resolve_product(query, qty, catalog)
+            resolution = {
+                "query": query,
+                "status": verdict["status"],
+                "quantity": qty,
+                "product": verdict.get("product"),
+                "options": verdict.get("options"),
+            }
+            resolutions.append(resolution)
 
-                # If this pid was not resolved in the current batch, run a quick
-                # clarification check to see whether the product is actually ambiguous.
-                if pid and pid not in resolved_this_batch and not clarification:
-                    product = catalog_by_id.get(pid)
-                    if product:
-                        try:
-                            check_str = tools_by_name["resolve_product"].invoke(
-                                {"query": product["name"], "quantity": qty}
-                            )
-                            check = json.loads(check_str)
-                            if check.get("status") == "needs_clarification" and check.get("options"):
-                                clarification = {
-                                    "question": f"¿Cuál {product.get('name', 'producto')} preferís?",
-                                    "options": check["options"],
-                                    "pending_request_id": str(uuid.uuid4()),
-                                    "pending_message": pending_message,
-                                    "original_query": product.get("name", ""),
-                                }
-                                # Block this add_to_cart — tell the LLM why
-                                tool_results.append((tc, json.dumps({
-                                    "added": False,
-                                    "error": "product requires clarification before adding",
-                                })))
-                                continue
-                        except Exception:
-                            _log.exception("clarification pre-check failed for pid %s", pid)
-
-                try:
-                    result = tool_fn.invoke(tc["args"])
-                except Exception:
-                    _log.exception("tool add_to_cart failed with args %s", tc["args"])
-                    result = json.dumps({"error": "tool execution failed"})
-                tool_results.append((tc, result))
-
-            elif tc["name"] == "resolve_product":
-                query = tc["args"].get("query", "")
-                # If this query was already resolved by a prior clarification, return
-                # the cached resolved result so the agent can continue without looping.
-                # Use substring matching to handle variations like "mascarpone" vs "queso mascarpone".
-                query_lower = query.lower().strip()
-                cached = resolved_queries.get(query_lower)
-                if not cached:
-                    for stored_key, stored_val in resolved_queries.items():
-                        if stored_key in query_lower or query_lower in stored_key:
-                            cached = stored_val
-                            break
-                if cached:
-                    synthetic = json.dumps({"status": "resolved", "product": cached})
-                    tool_results.append((tc, synthetic))
-                    resolved_this_batch[cached.get("id", "")] = cached
-                    last_resolve_query = query_lower
-                    continue
-
-                last_resolve_query = query_lower
-                try:
-                    result = tool_fn.invoke(tc["args"])
-                except Exception:
-                    _log.exception("tool %s failed with args %s", tc["name"], tc["args"])
-                    result = json.dumps({"error": "tool execution failed"})
-                tool_results.append((tc, result))
-
-                # Track product_ids that are now safely resolved in this batch
-                try:
-                    parsed = json.loads(result)
-                    if parsed.get("status") == "resolved" and parsed.get("product", {}).get("id"):
-                        resolved_this_batch[parsed["product"]["id"]] = parsed["product"]
-                except json.JSONDecodeError:
-                    pass
-
-            else:
-                try:
-                    result = tool_fn.invoke(tc["args"])
-                except Exception:
-                    _log.exception("tool %s failed with args %s", tc["name"], tc["args"])
-                    result = json.dumps({"error": "tool execution failed"})
-                tool_results.append((tc, result))
-
-        # Pass 2: build ToolMessages and process side effects
-        new_messages: list = []
-        db_writes: list[tuple[str, int]] = []
-
-        for tc, result in tool_results:
-            new_messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
-
-            if tc["name"] == "request_clarification" and not clarification:
-                try:
-                    parsed = json.loads(result)
-                except json.JSONDecodeError:
-                    parsed = {}
-                clarification = {
-                    "question": parsed.get("question", tc["args"].get("question", "¿Cuál preferís?")),
-                    "options": parsed.get("options", tc["args"].get("options", [])),
-                    "pending_request_id": parsed.get("pending_request_id"),
-                    "pending_message": pending_message,
-                    "original_query": last_resolve_query,
+            if verdict["status"] == "needs_clarification":
+                # Stop here; emit_clarification will handle this item
+                return {
+                    "resolutions": resolutions,
+                    "resolved_cart": resolved_cart,
+                    "missing_items": missing_items,
                 }
-
-            elif tc["name"] == "report_missing":
-                ingredient = tc["args"].get("ingredient", "").strip().lower()
-                if ingredient and ingredient not in missing_items:
-                    missing_items.append(ingredient)
-
-            elif tc["name"] == "add_to_cart":
-                try:
-                    parsed = json.loads(result)
-                except json.JSONDecodeError:
-                    parsed = {}
-                if parsed.get("added"):
-                    pid = parsed.get("product_id", tc["args"].get("product_id", ""))
-                    qty = parsed.get("quantity", tc["args"].get("quantity", 1))
-                    if session_id:
-                        db_writes.append((pid, qty))
-                    else:
-                        result_cart = _upsert_local_cart_item(result_cart, pid, qty, catalog)
-
-        # Structural invariant: catch any resolve_product needs_clarification that the
-        # agent acknowledged but didn't forward to request_clarification.
-        if not clarification:
-            for tc, result in tool_results:
-                if tc["name"] == "resolve_product":
-                    try:
-                        parsed = json.loads(result)
-                    except json.JSONDecodeError:
-                        continue
-                    if parsed.get("status") == "needs_clarification" and parsed.get("options"):
-                        clarification = {
-                            "question": f"¿Cuál {tc['args'].get('query', 'producto')} preferís?",
-                            "options": parsed["options"],
-                            "pending_request_id": str(uuid.uuid4()),
-                            "pending_message": pending_message,
-                            "original_query": tc["args"].get("query", ""),
-                        }
-                        break
-
-        if session_id and db_writes:
-            _write_session_cart_items(session_id, db_writes)
+            elif verdict["status"] == "resolved":
+                resolved_cart.append(_build_cart_item(verdict["product"], qty))
+            elif verdict["status"] == "not_found":
+                missing_items.append(query)
 
         return {
-            "messages": new_messages,
-            "result_cart": result_cart or None,
-            "clarification": clarification,
+            "resolutions": resolutions,
+            "resolved_cart": resolved_cart,
             "missing_items": missing_items,
-            "resolved_queries": resolved_queries,
         }
 
-    def should_continue(state: AgentState) -> str:
-        last_msg = state["messages"][-1]
-        if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
-            return "tools"
-        return END
+    # ── Node: apply_cart ───────────────────────────────────────────────────────
+    def apply_cart(state: ShopState, config: RunnableConfig) -> dict:
+        """Persist resolved_cart items to DB. Idempotent upsert, no LLM."""
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        if sid and state.get("resolved_cart"):
+            items = [(item["product_id"], item["quantity"]) for item in state["resolved_cart"]]
+            _write_session_cart_items(sid, items)
+        return {}
 
-    def after_tools(state: AgentState) -> str:
-        if state.get("clarification"):
-            return END
-        return "agent"
+    # ── Node: emit_clarification ───────────────────────────────────────────────
+    def emit_clarification(state: ShopState) -> dict:
+        """Format pending_clarification for the first needs_clarification resolution."""
+        unresolved = next(
+            (r for r in (state.get("resolutions") or [])
+             if r.get("status") == "needs_clarification"),
+            None,
+        )
+        if not unresolved:
+            return {}
 
-    graph = StateGraph(AgentState)
-    graph.add_node("agent", agent_node)
-    graph.add_node("tools", tools_node)
-    graph.add_edge(START, "agent")
-    graph.add_conditional_edges("agent", should_continue)
-    graph.add_conditional_edges("tools", after_tools)
+        pending = {
+            "question": f"¿Cuál {unresolved['query']} preferís?",
+            "options": unresolved["options"],
+            "pending_request_id": str(uuid.uuid4()),
+            "pending_message": state.get("raw_message", ""),
+            "original_query": unresolved["query"],
+            # Stored so handle_chat can resume after clarification without a re-classify call
+            "planned_items": state.get("planned_items") or [],
+            "resolved_so_far": [
+                r for r in (state.get("resolutions") or [])
+                if r.get("status") == "resolved"
+            ],
+        }
+        return {"pending_clarification": pending}
+
+    # ── Node: summarize ────────────────────────────────────────────────────────
+    def summarize(state: ShopState) -> dict:
+        """Generate natural-language reply. Falls back to deterministic template on error."""
+        pending = state.get("pending_clarification")
+        if pending:
+            return {"reply": pending["question"]}
+
+        added = [r for r in (state.get("resolutions") or []) if r.get("status") == "resolved"]
+        missing = state.get("missing_items") or []
+
+        # Build short fact string for LLM
+        parts = []
+        if added:
+            names = ", ".join(r["product"]["name"] for r in added if r.get("product"))
+            parts.append(f"Agregué: {names}.")
+        if missing:
+            parts.append(f"No encontré: {', '.join(missing)}.")
+
+        facts = " ".join(parts) if parts else state.get("raw_message", "")
+
+        system = (
+            "Sos un asistente de compras. Confirmá las acciones al usuario en español, "
+            "de forma amable y concisa. Sin markdown ni asteriscos."
+        )
+        try:
+            response = llm.invoke([
+                SystemMessage(content=system),
+                HumanMessage(content=facts),
+            ])
+            return {"reply": response.content}
+        except Exception:
+            # Deterministic fallback
+            return {"reply": " ".join(parts) if parts else "Hola, ¿en qué te puedo ayudar?"}
+
+    # ── Routing ────────────────────────────────────────────────────────────────
+    def route_after_classify(state: ShopState) -> str:
+        turn_kind = state.get("turn_kind", "smalltalk")
+        if turn_kind in ("smalltalk", "monthly_basket"):
+            return "summarize"
+        return "resolve_items"
+
+    def route_after_resolve(state: ShopState) -> str:
+        if any(r.get("status") == "needs_clarification" for r in (state.get("resolutions") or [])):
+            return "emit_clarification"
+        return "apply_cart"
+
+    # ── Graph wiring ───────────────────────────────────────────────────────────
+    graph = StateGraph(ShopState)
+    graph.add_node("classify_turn", classify_turn)
+    graph.add_node("resolve_items", resolve_items)
+    graph.add_node("apply_cart", apply_cart)
+    graph.add_node("emit_clarification", emit_clarification)
+    graph.add_node("summarize", summarize)
+
+    graph.add_edge(START, "classify_turn")
+    graph.add_conditional_edges("classify_turn", route_after_classify)
+    graph.add_conditional_edges("resolve_items", route_after_resolve)
+    graph.add_edge("apply_cart", "summarize")
+    graph.add_edge("emit_clarification", "summarize")
+    graph.add_edge("summarize", END)
 
     return graph.compile(checkpointer=_get_checkpointer())
 
@@ -663,12 +582,14 @@ def _handle_generate_basket(catalog: list[dict]) -> dict[str, Any]:
         order_history.append(items if isinstance(items, list) else [])
 
     budget = plan.get("monthly_budget") or float("inf")
-    candidates = generate_monthly_basket_candidates(
+    basket_result = generate_monthly_basket_candidates(
         prefs=plan,
         order_history=order_history,
         catalog=catalog,
         budget=budget,
     )
+    candidates = basket_result["candidates"]
+    budget_overflow = basket_result["budget_overflow"]
 
     catalog_by_id = {product["id"]: product for product in catalog}
     proposed_cart: list[dict] = []
@@ -691,10 +612,11 @@ def _handle_generate_basket(catalog: list[dict]) -> dict[str, Any]:
     recurring = sum(1 for item in proposed_cart if item.get("tag") == "recurring")
     offers = sum(1 for item in proposed_cart if item.get("tag") == "offer")
 
+    overflow_note = " ⚠️ El presupuesto no alcanza para cubrir todos los productos esenciales." if budget_overflow else ""
     reply = (
         f"Generé tu canasta mensual con {len(proposed_cart)} productos por ${total:.2f}. "
         f"{must_haves} esenciales, {recurring} recurrentes, {offers} con descuento. "
-        "Revisá el detalle y confirmá cuando quieras."
+        f"Revisá el detalle y confirmá cuando quieras.{overflow_note}"
     )
 
     return {
@@ -703,6 +625,7 @@ def _handle_generate_basket(catalog: list[dict]) -> dict[str, Any]:
         "cart": None,
         "clarification": None,
         "missing_items": [],
+        "budget_overflow": budget_overflow,
     }
 
 
@@ -746,53 +669,61 @@ def handle_chat(
             qty = 1
             product_label = " ".join(filter(None, [product.get("name", ""), product.get("package_size", "")]))
 
-            # Retrieve the original query and pending message from the prior clarification state
-            prior_state = None
-            original_query = ""
-            pending_message = ""
+            # Retrieve the prior clarification state to validate the chosen option.
+            prior_clarification: dict = {}
             if session_id:
                 try:
                     prior_state = app.get_state(config)
-                    prior_clarification = prior_state.values.get("clarification") or {}
-                    original_query = (prior_clarification.get("original_query") or "").lower().strip()
-                    pending_message = prior_clarification.get("pending_message") or ""
+                    prior_clarification = prior_state.values.get("pending_clarification") or {}
+
+                    # Validate chosen_id against the options that were actually presented.
+                    prior_options = prior_clarification.get("options") or []
+                    valid_ids = {opt.get("id", "") for opt in prior_options}
+                    if valid_ids and chosen_id not in valid_ids:
+                        return {
+                            "reply": "Esa opción no es válida. Por favor elegí una de las opciones presentadas.",
+                            "cart": _read_session_cart(session_id, catalog),
+                            "clarification": prior_clarification if prior_clarification else None,
+                            "missing_items": [],
+                        }
                 except Exception:
                     pass
 
             if session_id:
                 _write_session_cart_item(session_id, chosen_id, qty)
 
-                # Cache the resolved query so tools_node won't trigger clarification again.
-                # Then re-invoke the graph with the original user request so the agent
-                # continues adding the remaining ingredients.
-                if original_query and pending_message:
-                    # Get existing resolved_queries and add this resolution
-                    existing_resolved = dict((prior_state.values.get("resolved_queries") or {}) if prior_state else {})
-                    existing_resolved[original_query] = product
-                    app.update_state(
-                        config,
-                        {"clarification": None, "resolved_queries": existing_resolved},
-                    )
-                    # Re-invoke graph to continue with remaining ingredients
-                    current_cart = _read_session_cart(session_id, catalog)
-                    cart_lines = "\n".join(
-                        f"- {i.get('name')} x{i.get('quantity')} ${i.get('price', 0):.2f}"
-                        for i in current_cart
-                    ) if current_cart else "vacío"
-                    resume_input = {
-                        "messages": [
-                            SystemMessage(content=f"Carrito actual (actualizado):\n{cart_lines}"),
-                            HumanMessage(content=pending_message),
-                        ],
-                        "clarification": None,
+                pending_message = prior_clarification.get("pending_message", "")
+                stored_planned_items = prior_clarification.get("planned_items") or []
+                resolved_so_far = prior_clarification.get("resolved_so_far") or []
+
+                if pending_message and stored_planned_items:
+                    # Resume: inject chosen product + prior resolved items, then continue
+                    chosen_resolution = {
+                        "query": prior_clarification.get("original_query", chosen_id),
+                        "status": "resolved",
+                        "product": product,
+                        "quantity": qty,
+                        "options": None,
+                    }
+                    resume_input: dict = {
+                        "raw_message": pending_message,
+                        "turn_kind": "clarification_reply",
+                        "planned_items": stored_planned_items,
+                        "resolutions": list(resolved_so_far) + [chosen_resolution],
+                        "resolved_cart": [],
                         "missing_items": [],
+                        "pending_clarification": None,
+                        "reply": "",
+                        "session_id": session_id,
+                        "initial_cart": initial_cart,
+                        "history": _trim_history(history),
+                        "context": context or "",
                     }
                     final_state = app.invoke(resume_input, config=config)
-                    next_clarification = final_state.get("clarification")
                     return {
-                        "reply": _extract_reply(final_state),
+                        "reply": final_state.get("reply", f"Listo, agregué {product_label} al carrito."),
                         "cart": _read_session_cart(session_id, catalog),
-                        "clarification": next_clarification,
+                        "clarification": final_state.get("pending_clarification"),
                         "missing_items": final_state.get("missing_items") or [],
                     }
 
@@ -814,84 +745,32 @@ def handle_chat(
                 }
 
     # ── Normal turn ────────────────────────────────────────────────────────────
-    existing = None
-    if session_id:
-        try:
-            existing = app.get_state(config)
-            is_new_session = not existing.values.get("messages")
-        except Exception:
-            is_new_session = True
-    else:
-        is_new_session = True  # stateless: always rebuild full context
-
-    if is_new_session:
-        init_messages: list = [SystemMessage(content=_build_system_prompt())]
-        if initial_cart:
-            cart_text = "Carrito actual:\n" + "\n".join(
-                f"- {i.get('name')} x{i.get('quantity')} ${i.get('price', 0):.2f}"
-                for i in initial_cart
-            )
-            init_messages.append(SystemMessage(content=cart_text))
-        if context:
-            init_messages.append(SystemMessage(content=context))
-        for msg in _trim_history(history):
-            if msg["role"] == "user":
-                init_messages.append(HumanMessage(content=msg["content"]))
-            elif msg["role"] == "assistant":
-                init_messages.append(AIMessage(content=msg["content"]))
-        init_messages.append(HumanMessage(content=message))
-        invoke_input: dict = {
-            "messages": init_messages,
-            "result_cart": None if session_id else (initial_cart or None),
-            "clarification": None,
-            "missing_items": [],
-            "resolved_queries": {},
-        }
-    else:
-        # Existing session: inject updated cart state so removals made via UI are visible,
-        # then append the new human message. Checkpointer holds the rest of the history.
-        if initial_cart:
-            cart_lines = "\n".join(
-                f"- {i.get('name')} x{i.get('quantity')} ${i.get('price', 0):.2f}"
-                for i in initial_cart
-            )
-            cart_update = SystemMessage(content=f"Carrito actual (actualizado):\n{cart_lines}")
-        else:
-            cart_update = SystemMessage(content="Carrito actual: vacío.")
-
-        # Loop-guard: if the previous agent turn produced no tool calls (i.e. the agent
-        # responded with text instead of calling resolve_product), inject a one-line
-        # reminder so it doesn't repeat the same non-tool response.
-        prior_messages = (existing.values.get("messages", []) if existing is not None else [])
-        last_ai = next((m for m in reversed(prior_messages) if isinstance(m, AIMessage)), None)
-        agent_was_stuck = last_ai is not None and not last_ai.tool_calls
-
-        extra_msgs = []
-        if agent_was_stuck:
-            extra_msgs.append(SystemMessage(content=(
-                "RECORDATORIO OBLIGATORIO: Para cada producto que el usuario mencione, "
-                "llamá resolve_product de inmediato. No respondas con texto sin antes "
-                "llamar las herramientas. No pidas confirmación."
-            )))
-
-        invoke_input = {
-            "messages": extra_msgs + [cart_update, HumanMessage(content=message)],
-            "clarification": None,   # clear any stale clarification from prior turn
-            "missing_items": [],     # reset per-turn
-            "resolved_queries": {},  # reset per new user request
-        }
+    invoke_input: dict = {
+        "raw_message": message,
+        "turn_kind": "",
+        "planned_items": [],
+        "resolutions": [],
+        "resolved_cart": [],
+        "missing_items": [],
+        "pending_clarification": None,
+        "reply": "",
+        "session_id": session_id,
+        "initial_cart": initial_cart,
+        "history": _trim_history(history),
+        "context": context or "",
+    }
 
     final_state = app.invoke(invoke_input, config=config)
 
-    clarification = final_state.get("clarification")
+    clarification = final_state.get("pending_clarification")
     cart_result = (
         _read_session_cart(session_id, catalog)
         if session_id
-        else final_state.get("result_cart")
+        else (final_state.get("resolved_cart") or initial_cart or None)
     )
 
     return {
-        "reply": _extract_reply(final_state),
+        "reply": final_state.get("reply", ""),
         "cart": cart_result,
         "clarification": clarification,
         "missing_items": final_state.get("missing_items") or [],

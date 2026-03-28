@@ -452,7 +452,7 @@ class TestGenerateMonthlyBasket:
             catalog=CATALOG,
             budget=500.0,
         )
-        tags = [r["tag"] for r in result]
+        tags = [r["tag"] for r in result["candidates"]]
         assert "must_have" in tags
 
     def test_must_have_product_resolved(self, monkeypatch):
@@ -463,7 +463,7 @@ class TestGenerateMonthlyBasket:
             catalog=CATALOG,
             budget=500.0,
         )
-        must_haves = [r for r in result if r["tag"] == "must_have"]
+        must_haves = [r for r in result["candidates"] if r["tag"] == "must_have"]
         assert len(must_haves) == 1
         assert must_haves[0]["product"]["id"] == "p5"
 
@@ -481,7 +481,7 @@ class TestGenerateMonthlyBasket:
             catalog=CATALOG,
             budget=1000.0,
         )
-        recurring = [r for r in result if r["tag"] == "recurring"]
+        recurring = [r for r in result["candidates"] if r["tag"] == "recurring"]
         assert any(r["product"]["id"] == "p1" for r in recurring)
 
     def test_single_order_not_recurring(self, monkeypatch):
@@ -494,7 +494,7 @@ class TestGenerateMonthlyBasket:
             catalog=CATALOG,
             budget=1000.0,
         )
-        recurring_ids = [r["product"]["id"] for r in result if r["tag"] == "recurring"]
+        recurring_ids = [r["product"]["id"] for r in result["candidates"] if r["tag"] == "recurring"]
         assert "p2" not in recurring_ids
 
     def test_budget_cap_respected(self, monkeypatch):
@@ -512,7 +512,7 @@ class TestGenerateMonthlyBasket:
             catalog=catalog_with_discount,
             budget=160.0,
         )
-        total = sum(r["estimated_price"] for r in result if r["tag"] != "must_have")
+        total = sum(r["estimated_price"] for r in result["candidates"] if r["tag"] != "must_have")
         assert total <= 160.0
 
     def test_no_duplicate_products(self, monkeypatch):
@@ -528,7 +528,7 @@ class TestGenerateMonthlyBasket:
             catalog=CATALOG,
             budget=1000.0,
         )
-        product_ids = [r["product"]["id"] for r in result if r["product"]]
+        product_ids = [r["product"]["id"] for r in result["candidates"] if r["product"]]
         assert len(product_ids) == len(set(product_ids)), "Duplicate product IDs found"
 
     def test_offer_tag_for_discounted_items(self, monkeypatch):
@@ -543,5 +543,44 @@ class TestGenerateMonthlyBasket:
             catalog=catalog_with_discount,
             budget=500.0,
         )
-        offer_ids = [r["product"]["id"] for r in result if r["tag"] == "offer"]
+        offer_ids = [r["product"]["id"] for r in result["candidates"] if r["tag"] == "offer"]
         assert "offer1" in offer_ids
+
+    # ── Bug #7 — budget_overflow signal ──────────────────────────────────────
+
+    def test_budget_overflow_dict_shape(self, monkeypatch):
+        """generate_monthly_basket_candidates must return a dict with 'candidates' and
+        'budget_overflow' keys, not a plain list."""
+        self._no_index(monkeypatch)
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": ["yogur danone"]},
+            order_history=[],
+            catalog=CATALOG,
+            budget=500.0,
+        )
+        assert isinstance(result, dict), "return value must be a dict"
+        assert "candidates" in result
+        assert "budget_overflow" in result
+
+    def test_budget_overflow_true_when_must_haves_exceed_budget(self, monkeypatch):
+        """budget_overflow=True when must_have items cost more than the budget."""
+        self._no_index(monkeypatch)
+        # p5 (Yogur Danone) costs 150.0; budget=100 → must_have exceeds budget → overflow
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": ["yogur danone"]},
+            order_history=[],
+            catalog=CATALOG,
+            budget=100.0,
+        )
+        assert result["budget_overflow"] is True
+
+    def test_budget_overflow_false_when_within_budget(self, monkeypatch):
+        """budget_overflow=False when all items fit within budget."""
+        self._no_index(monkeypatch)
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": ["yogur danone"]},
+            order_history=[],
+            catalog=CATALOG,
+            budget=500.0,
+        )
+        assert result["budget_overflow"] is False
