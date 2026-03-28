@@ -10,12 +10,11 @@ This plan follows the real codebase shape that already exists today, but it is t
 |---|---|---|
 | VERSION0 | ✅ Complete | Yes |
 | VERSION1 | ✅ Complete | Yes |
-| VERSION2 | ✅ Complete (code) — demo blocked on catalog data | Yes |
-| VERSION3 | 🔜 Next | — |
+| VERSION2 | ✅ Complete | Yes |
+| VERSION3 | 🔜 Active | — |
 | VERSION4 | ⬜ Upcoming | — |
 
-**Active work:** V2 demo validation → then V3 (clarification popup + offers-aware ranking).
-**Immediate blocker:** `data/catalog_snapshot.json` and `data/product_semantic_index.json` must be generated before any live demo.
+**Active work:** VERSION3 — clarification popup + offers-aware ranking.
 
 ## Actual stack to keep during the hackathon
 
@@ -140,7 +139,7 @@ The user can ask for a specific product such as a brand, size, or quantity, and 
 - ✅ Malformed cart items are rejected before UI rendering.
 - ✅ The add-specific-product flow is covered by automated tests.
 
-## VERSION2 ✅ (code complete — pending live demo)
+## VERSION2 ✅
 
 **Complex queries, recipes, and stock-aware alternatives**
 
@@ -179,12 +178,12 @@ The user can ask for a recipe, a meal goal, or a broader shopping intent, and th
 - Cover the highest-risk recipe and substitution behaviors with a small targeted test set.
 
 ### Unite gate
-- ⬜ Queries like `quiero hacer una torta` and `armame desayunos para la semana` add several relevant items. *(blocked on catalog data)*
+- ✅ Queries like `quiero hacer una torta` and `armame desayunos para la semana` add several relevant items.
 - ✅ Out-of-stock products never silently disappear: they are substituted or explicitly called out.
 - ✅ The reply explains the result in a way the user can audit.
 - ✅ Automated eval scenarios exist for recipes, multi-item goals, and alternatives.
 
-## VERSION3 🔜
+## VERSION3 🔜 Active
 ## Current target
 
 **Clarification popup plus offers-aware cart reasoning**

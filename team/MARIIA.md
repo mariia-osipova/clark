@@ -7,6 +7,8 @@ You are assisting Mariia (also goes by Mari). Her focus is the layout system, ch
 - `frontend/styles.css` — visual system (layout, typography, spacing, cards)
 - `frontend/app.js` — vanilla JS state machine (tabs, cart rendering, chat thread, localStorage)
 
+## Current version: VERSION3 active
+
 ## Current focus
 - [ ] Refine the clarification popup/modal so it feels fast and obvious, not disruptive
 - [ ] Show option cards with image, brand, size, price, and discount in a scannable layout

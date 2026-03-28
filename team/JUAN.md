@@ -9,7 +9,7 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 - `data/catalog_snapshot.json` — normalized catalog source
 - `data/product_semantic_index.json` — semantic index
 
-## Current version: VERSION2 complete → VERSION3 next
+## Current version: VERSION3 active
 
 ### V0 ✅
 - [x] Implement the scraper/normalizer for catalog items (Carrefour public catalog)
@@ -50,7 +50,7 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 | V0 | Scraper, normalization, first-pass query filter | ✅ Done |
 | V1 | Product ranking for exact and near-exact matches, filter unavailable items, initial tests | ✅ Done |
 | V2 | Semantic retrieval in `product_semantic_index.py`, rank alternatives, expand eval suite | ✅ Done |
-| V3 | Extend ranking with discount/offer awareness, define clarification candidate sets | 🔜 Next |
+| V3 | Extend ranking with discount/offer awareness, define clarification candidate sets | 🔜 Active |
 | V4 | Use order history + offers for monthly basket ranking, bundle-level reasoning | ⬜ Upcoming |
 
 ## How to help Juan
