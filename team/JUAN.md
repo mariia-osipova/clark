@@ -39,11 +39,117 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 - [x] Define "materially different" candidate sets for clarification (brand mismatch, size delta >20%, price delta >15%)
 - [x] Expand evals for ambiguous cola, size conflicts, close-brand choices
 
-### V4 🔜
-- [ ] `resolve_product(query, quantity, catalog)` in `product_semantic_index.py`: wraps `search()` → `build_clarification_candidates()` → `find_alternatives()` into a single verdict dict (`resolved` / `needs_clarification` / `not_found`). Eliminates ambiguity judgment and substitute-vs-report decisions from the LLM.
-- [ ] `parse_quantity(message)` utility: regex + Spanish word-number map ("dos" → 2, "3 botellas" → 3, never confuses "1L" size with quantity).
-- [ ] `generate_monthly_basket_candidates(prefs, order_history, catalog, budget)`: rule-based algorithm. Pulls must-haves from preferences, counts frequency across order history, resolves each via `resolve_product()`, fills remaining budget with high-discount items. Returns candidates tagged `must_have` / `recurring` / `offer` / `suggested`. LLM presents — does not compute.
-- [ ] Eval cases for monthly restock, budget pressure, and missing essentials.
+### V4 🔜 (Robustness Rebuild — Active)
+
+#### Immediate bug fixes (do these first)
+- [ ] **Bug #1 CRITICAL** — `chat_agent_agentic.py:743-744`: validate `chosen_option_id` against the stored clarification options for the matching `pending_request_id`. Any product_id is currently accepted, allowing arbitrary products to be added.
+- [ ] **Bug #2 CRITICAL** — `chat_agent_agentic.py:483-496`: replace substring match in `resolved_queries` lookup with exact key match on `original_query`. Substring matching can miss or collide, causing the clarification modal to re-trigger infinitely.
+- [ ] **Bug #7 MEDIUM** — `product_semantic_index.py:264-266`: `must_haves` bypass the budget gate. Track `budget_used` for all items including must-haves; add `budget_overflow: bool` to the return dict so the caller can warn the user.
+
+#### Phase 1 — Clarification state machine hardening
+- [ ] After clarification reply validation, store resolved product using exact `original_query` string as key (not substring)
+- [ ] Add guard in `tools_node`: if `resolve_product()` is called for a query already in `resolved_queries`, return cached result immediately (no re-resolution)
+- [ ] Add `max_clarification_turns=1` guard: if clarification is already pending in state, `tools_node` must not generate a second one — call `report_missing` instead
+- [ ] Add tests in `tests/test_chat_agent.py` for: (a) valid chosen_option_id, (b) invalid chosen_option_id rejected, (c) no infinite loop on re-invoke
+
+#### Phase 2 — Replace ReAct loop with phase-based graph
+Replace the generic `agent → tools → loop` with explicit deterministic nodes. LLM only participates in `classify_turn` and `summarize`.
+
+Graph shape:
+```
+classify_turn → plan_items → resolve_items → apply_cart → summarize
+                                  ↓ (needs_clarification)
+                            emit_clarification → END
+```
+
+New typed state to add to `chat_agent_agentic.py`:
+```python
+class TurnKind(str, Enum):
+    shopping = "shopping"
+    clarification_reply = "clarification_reply"
+    monthly_basket = "monthly_basket"
+    smalltalk = "smalltalk"
+
+@dataclass
+class PlannedItem:
+    query: str
+    quantity: int
+    constraints: dict  # brand, size, exclusions from user phrasing
+
+@dataclass
+class ResolutionResult:
+    planned_item: PlannedItem
+    verdict: str  # "resolved" | "needs_clarification" | "not_found"
+    product: dict | None
+    options: list[dict] | None
+
+class ShopState(TypedDict):
+    turn_kind: TurnKind
+    planned_items: list  # list[PlannedItem]
+    resolutions: list    # list[ResolutionResult]
+    pending_clarification: dict | None
+    resolved_cart: list[dict]
+    missing_items: list[str]
+    reply: str
+```
+
+Node responsibilities:
+- `classify_turn`: single LLM call → `TurnKind` + `PlannedItem[]` extracted in one shot
+- `resolve_items`: calls `resolve_product()` for each item; stops at first `needs_clarification`; already-resolved items stay in `resolved_cart`
+- `apply_cart`: upserts resolved items to `session_carts` — pure DB writes, no LLM
+- `emit_clarification`: formats `PendingClarification` for first unresolved item, returns END
+- `summarize`: LLM call receives structured `TurnResultFacts` (not raw tool history); falls back to deterministic template if LLM unavailable
+
+**Key invariant:** `handle_chat()` return shape stays identical throughout the refactor.
+
+#### Phase 3 — `resolve_product()` as single source of truth
+- [ ] Wire `resolve_items` node to call `resolve_product()` for every `PlannedItem` — no LLM judgment on ambiguity
+- [ ] Remove prompt-based "decide if this is ambiguous" instructions from system prompt
+- [ ] Ensure `resolve_product()` handles all four cases: exact match, substitute-eligible, needs_clarification, not_found
+
+#### Phase 4 — `generate_monthly_basket_candidates()` cleanup
+- [ ] Add `budget_overflow: bool` to return dict (fix for bug #7)
+- [ ] Validate all three tags (`must_have`, `recurring`, `offer`) are used consistently
+- [ ] Signature must be: `generate_monthly_basket_candidates(prefs: dict, order_history: list, catalog: list, budget: float) -> list[dict]`
+- [ ] This is the single function both the chat action and REST endpoint call — no alternative code path
+
+#### Phase 5 — Clarification resume for multi-item requests
+- [ ] Persist `resolved_so_far: list[ResolutionResult]` inside `PendingClarification` dict
+- [ ] On clarification reply, inject resolved items directly into `ShopState.resolutions` before graph runs
+- [ ] `resolve_items` node skips items already in `resolutions`, only processes remaining `PlannedItem[]`
+
+#### Phase 6 — Eval suite expansion
+Prerequisite: add multi-turn scenario support to `run_llm_judge_eval.py` (shared `session_id` across turns within a scenario).
+
+Add `expected_product_ids` to ALL existing 13 scenarios (currently empty everywhere).
+
+New scenario groups to add to `llm_eval_harness.py`:
+
+**Group A — Clarification resume (zero coverage today)**
+- `clarification_resume_single`: ambiguous yogur → user picks → agent adds
+- `clarification_resume_recipe`: tiramisú → mascarpone ambiguity → user picks → 5+ remaining items added
+
+**Group B — Multi-item partial resolution**
+- `partial_recipe_oos`: 5-item breakfast, 2 OOS → cart has 3, `missing_items` has 2
+- `multi_item_mixed_certainty`: "leche, yogur, crema" → exact / substitute / not_found, one of each
+
+**Group C — Quantity parsing**
+- `quantity_spanish_words`: "dos yogures" → qty=2
+- `quantity_no_size_confusion`: "3 botellas de leche 1L" → qty=3, not confused with size
+- `quantity_duplicate_request`: same item twice → qty=2 upsert, not two rows
+
+**Group D — Cart idempotency** (requires multi-turn harness)
+- `session_cart_multi_turn`: turn1 add A, turn2 add B → cart=[A,B]
+- `session_cart_upsert`: add 1 leche twice → qty=2
+
+**Group E — Monthly basket**
+- `monthly_basket_must_haves`: must_haves always in proposed_cart
+- `monthly_basket_budget_cap`: must_haves + recurring stays ≤ budget; `budget_overflow: true` if exceeded
+- `monthly_basket_recurring_detection`: items in 2+ orders get `recurring` tag
+
+Judge improvements:
+- Replace vague PASS/FAIL reason string with structured checks: `cart_size_ok`, `product_ids_match`, `missing_items_populated`, `no_clarification_leak`
+- Pass catalog subset (names + IDs of cart items) to judge for product grounding
 
 ## Version roadmap (Juan)
 | Version | Focus | Status |
