@@ -87,7 +87,18 @@ def resolve_product(query: str, quantity: int, catalog: list[dict]) -> dict:
     results = search(query, catalog)
 
     if not results:
-        alternatives = find_alternatives(query, catalog)
+        tokens = _tokenize(query)
+        oos_matches = [
+            product for product in catalog
+            if product.get("available_quantity", 1) == 0 and _keyword_score(tokens, product) > 0
+        ]
+        category = oos_matches[0].get("category") if oos_matches else None
+        alternatives = find_alternatives(query, catalog, category=category)
+        if not alternatives and category:
+            alternatives = [
+                product for product in catalog
+                if product.get("available_quantity", 1) != 0 and product.get("category") == category
+            ][:3]
         if not alternatives:
             return {"status": "not_found", "quantity": quantity}
         return {
@@ -586,4 +597,3 @@ def _candidates_are_ambiguous(candidates: list[dict]) -> bool:
         return True
 
     return False
-
