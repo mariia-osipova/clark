@@ -3,15 +3,20 @@ Semantic retrieval and product ranking.
 Owner: Juan
 
 Provides:
+    parse_quantity(message) -> int
+    resolve_product(query, quantity, catalog) -> dict
     search(query, catalog, top_k) -> list[dict]
     rank_candidates(candidates, query) -> list[dict]
     find_alternatives(query, catalog, category, top_k) -> list[dict]
+    build_clarification_candidates(candidates, max_options) -> list[dict]
+    generate_monthly_basket_candidates(prefs, order_history, catalog, budget) -> list[dict]
     build_index(catalog) -> None   (writes data/product_semantic_index.json)
 """
 
 import json
 import re
 import unicodedata
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -22,8 +27,85 @@ CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
 _MODEL_CACHE: dict = {}   # key "model" → SentenceTransformer instance
 _INDEX_CACHE: dict = {}   # key "entries" → list[{id, embedding}], "path_mtime" → float
 
+# Spanish word-to-number map for parse_quantity
+_WORD_TO_NUM: dict[str, int] = {
+    "un": 1, "una": 1, "uno": 1,
+    "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10,
+    "once": 11, "doce": 12,
+}
+
 
 # ─── Public API ──────────────────────────────────────────────────────────────
+
+def parse_quantity(message: str) -> int:
+    """
+    Extract the intended purchase quantity from a natural-language message.
+
+    Handles:
+      - Digit quantities: "3 botellas", "agrega 2 yogures" → 3, 2
+      - Spanish word-numbers: "dos paquetes", "tres litros" → 2, 3
+      - Default: returns 1 when no quantity is found
+
+    Never confuses size expressions ("1L", "500ml", "200g") with quantity.
+    "3 botellas de leche 1L" → 3, not 1.
+    """
+    # Strip size expressions first so "1L" in "leche 1L" is not treated as qty 1
+    stripped = _UNIT_RE.sub("", message)
+
+    # Look for a positive integer in the stripped text
+    m = re.search(r"\b([1-9]\d*)\b", stripped)
+    if m:
+        return int(m.group(1))
+
+    # Fall back to Spanish word-numbers
+    for token in _tokenize(stripped):
+        if token in _WORD_TO_NUM:
+            return _WORD_TO_NUM[token]
+
+    return 1
+
+
+def resolve_product(query: str, quantity: int, catalog: list[dict]) -> dict:
+    """
+    Single-call product resolution: wraps search → clarification detection → alternatives.
+
+    Returns a verdict dict with one of three statuses:
+      resolved            → {status, product: dict, quantity: int, substituted: bool}
+      needs_clarification → {status, options: list[dict], quantity: int}
+      not_found           → {status, quantity: int}
+
+    Eliminates ambiguity judgment and substitute-vs-report decisions from the LLM.
+    The LLM receives this dict and routes accordingly — it does not compute it.
+    """
+    results = search(query, catalog)
+
+    if not results:
+        alternatives = find_alternatives(query, catalog)
+        if not alternatives:
+            return {"status": "not_found", "quantity": quantity}
+        return {
+            "status": "resolved",
+            "product": alternatives[0],
+            "quantity": quantity,
+            "substituted": True,
+        }
+
+    options = build_clarification_candidates(results)
+    if options:
+        return {
+            "status": "needs_clarification",
+            "options": options,
+            "quantity": quantity,
+        }
+
+    return {
+        "status": "resolved",
+        "product": results[0],
+        "quantity": quantity,
+        "substituted": False,
+    }
+
 
 def search(query: str, catalog: list[dict], top_k: int = 10) -> list[dict]:
     """
@@ -139,6 +221,106 @@ def build_clarification_candidates(
         }
         for p in pool
     ]
+
+
+def generate_monthly_basket_candidates(
+    prefs: dict,
+    order_history: list[list[dict]],
+    catalog: list[dict],
+    budget: float,
+) -> list[dict]:
+    """
+    Rule-based monthly basket generator — no LLM involved.
+    The LLM presents the result; it does not compute it.
+
+    Algorithm (three passes):
+      1. Must-haves from prefs["must_haves"]  → tag "must_have"  (always included)
+      2. Items appearing in ≥2 past orders    → tag "recurring"  (budget-capped)
+      3. Highest-discount in-stock items      → tag "offer"      (fills remaining budget)
+
+    Each item in order_history must be a list of dicts with a "product_id" key.
+
+    Returns list[dict] with shape:
+        {query, tag, status, product|None, quantity, estimated_price}
+    """
+    candidates: list[dict] = []
+    seen_ids: set[str] = set()
+    running_cost = 0.0
+
+    def _add(query: str, tag: str, verdict: dict) -> bool:
+        """Append a resolved verdict to candidates. Returns True if added."""
+        nonlocal running_cost
+        product = verdict.get("product")
+        qty = verdict.get("quantity", 1)
+        price = (product["price"] if product else 0.0) * qty
+
+        if product:
+            if product["id"] in seen_ids:
+                return False
+            seen_ids.add(product["id"])
+
+        # Must-haves always included; others are budget-gated
+        if tag != "must_have" and running_cost + price > budget:
+            return False
+
+        running_cost += price
+        candidates.append({
+            "query": query,
+            "tag": tag,
+            "status": verdict["status"],
+            "product": product,
+            "quantity": qty,
+            "estimated_price": price,
+        })
+        return True
+
+    # Pass 1 — must-haves
+    for query in prefs.get("must_haves", []):
+        verdict = resolve_product(query, 1, catalog)
+        _add(query, "must_have", verdict)
+
+    # Pass 2 — recurring (appear in ≥2 orders)
+    freq: Counter = Counter()
+    for order in order_history:
+        for item in order:
+            pid = item.get("product_id") or item.get("id")
+            if pid:
+                freq[pid] += 1
+
+    id_to_product = {p["id"]: p for p in catalog}
+    for pid, count in freq.most_common():
+        if count < 2:
+            break
+        if pid in seen_ids:
+            continue
+        product = id_to_product.get(pid)
+        if not product or product.get("available_quantity", 1) == 0:
+            continue
+        _add(product.get("name", pid), "recurring", {
+            "status": "resolved",
+            "product": product,
+            "quantity": 1,
+        })
+
+    # Pass 3 — offer fill (best discounts within remaining budget)
+    if running_cost < budget:
+        discounted = sorted(
+            [
+                p for p in catalog
+                if p.get("available_quantity", 1) != 0
+                and p["id"] not in seen_ids
+                and p.get("discount_pct", 0) > 0
+            ],
+            key=lambda p: -p.get("discount_pct", 0),
+        )
+        for product in discounted:
+            _add(product.get("name", ""), "offer", {
+                "status": "resolved",
+                "product": product,
+                "quantity": 1,
+            })
+
+    return candidates
 
 
 def build_index(catalog: list[dict]) -> None:

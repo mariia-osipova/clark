@@ -17,6 +17,9 @@ from backend.product_semantic_index import (
     rank_candidates,
     find_alternatives,
     build_clarification_candidates,
+    parse_quantity,
+    resolve_product,
+    generate_monthly_basket_candidates,
     _normalize_text,
     _normalize_size,
     _brand_score,
@@ -332,3 +335,213 @@ class TestClarificationCandidates:
             assert "product" in opt, "Option must have 'product'"
             assert "price" in opt["product"], "product must contain 'price'"
             assert "brand" in opt["product"], "product must contain 'brand'"
+
+
+# ─── parse_quantity() ─────────────────────────────────────────────────────────
+
+class TestParseQuantity:
+    def test_digit_quantity(self):
+        assert parse_quantity("agrega 3 yogures") == 3
+
+    def test_digit_with_container_word(self):
+        assert parse_quantity("quiero 2 botellas de agua") == 2
+
+    def test_spanish_word_dos(self):
+        assert parse_quantity("dos paquetes de fideos") == 2
+
+    def test_spanish_word_tres(self):
+        assert parse_quantity("tres leches") == 3
+
+    def test_spanish_word_un(self):
+        assert parse_quantity("un yogur") == 1
+
+    def test_size_not_confused_with_quantity(self):
+        """'1L' must NOT be treated as quantity 1 when a real qty is present."""
+        assert parse_quantity("3 botellas de leche 1L") == 3
+
+    def test_size_only_returns_default(self):
+        """A message with only a size expression (no quantity) returns 1."""
+        assert parse_quantity("leche entera 1L") == 1
+
+    def test_no_quantity_returns_default(self):
+        assert parse_quantity("quiero leche entera") == 1
+
+    def test_500ml_not_confused(self):
+        assert parse_quantity("dame 4 jugos de 500ml") == 4
+
+    def test_quantity_zero_ignored(self):
+        """'0 unidades' makes no sense — should not return 0."""
+        # After stripping size expressions, "0" remains but \b([1-9]\d*)\b won't match it
+        result = parse_quantity("0 unidades de leche")
+        assert result >= 1
+
+
+# ─── resolve_product() ───────────────────────────────────────────────────────
+
+class TestResolveProduct:
+    def test_resolved_single_clear_result(self, monkeypatch):
+        """Single unambiguous match → status resolved, substituted=False."""
+        import backend.product_semantic_index as mod
+        monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
+        monkeypatch.setattr(mod, "_INDEX_CACHE", {})
+        # p5 is the only yogur in CATALOG — search returns it alone → no ambiguity
+        result = resolve_product("yogur danone", 2, CATALOG)
+        assert result["status"] == "resolved"
+        assert result["product"]["id"] == "p5"
+        assert result["quantity"] == 2
+        assert result["substituted"] is False
+
+    def test_needs_clarification_brand_mismatch(self, monkeypatch):
+        """Multiple brands in results → needs_clarification."""
+        import backend.product_semantic_index as mod
+        monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
+        monkeypatch.setattr(mod, "_INDEX_CACHE", {})
+        # "leche" matches p1 (Serenísima), p2 (SanCor), p3 (Serenísima) → brand mismatch
+        result = resolve_product("leche entera 1L", 1, CATALOG)
+        assert result["status"] == "needs_clarification"
+        assert len(result["options"]) >= 2
+        assert result["quantity"] == 1
+
+    def test_not_found_all_oos(self, monkeypatch):
+        """All-OOS catalog → not_found."""
+        import backend.product_semantic_index as mod
+        monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
+        monkeypatch.setattr(mod, "_INDEX_CACHE", {})
+        oos_catalog = [
+            _product("oos1", "Leche Entera SanCor", "SanCor", "1L",
+                     available_quantity=0),
+        ]
+        result = resolve_product("leche", 1, oos_catalog)
+        assert result["status"] == "not_found"
+        assert result["quantity"] == 1
+
+    def test_substituted_when_search_empty(self, monkeypatch):
+        """No keyword match → find_alternatives picks something → substituted=True."""
+        import backend.product_semantic_index as mod
+        monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
+        monkeypatch.setattr(mod, "_INDEX_CACHE", {})
+        # "vino tinto malbec" has no keyword overlap with CATALOG
+        # find_alternatives last-resort fallback returns in-stock items
+        result = resolve_product("vino tinto malbec", 1, CATALOG)
+        assert result["status"] == "resolved"
+        assert result["substituted"] is True
+        assert result["product"] is not None
+
+    def test_verdict_contains_quantity(self, monkeypatch):
+        """quantity is always echoed back in the verdict."""
+        import backend.product_semantic_index as mod
+        monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
+        monkeypatch.setattr(mod, "_INDEX_CACHE", {})
+        result = resolve_product("yogur danone", 5, CATALOG)
+        assert result["quantity"] == 5
+
+
+# ─── generate_monthly_basket_candidates() ────────────────────────────────────
+
+class TestGenerateMonthlyBasket:
+    def _no_index(self, monkeypatch):
+        import backend.product_semantic_index as mod
+        monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
+        monkeypatch.setattr(mod, "_INDEX_CACHE", {})
+
+    def test_must_haves_tagged(self, monkeypatch):
+        self._no_index(monkeypatch)
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": ["yogur danone"]},
+            order_history=[],
+            catalog=CATALOG,
+            budget=500.0,
+        )
+        tags = [r["tag"] for r in result]
+        assert "must_have" in tags
+
+    def test_must_have_product_resolved(self, monkeypatch):
+        self._no_index(monkeypatch)
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": ["yogur danone"]},
+            order_history=[],
+            catalog=CATALOG,
+            budget=500.0,
+        )
+        must_haves = [r for r in result if r["tag"] == "must_have"]
+        assert len(must_haves) == 1
+        assert must_haves[0]["product"]["id"] == "p5"
+
+    def test_recurring_items_tagged(self, monkeypatch):
+        self._no_index(monkeypatch)
+        # p1 appears in 3 out of 3 orders → should be tagged recurring
+        history = [
+            [{"product_id": "p1", "quantity": 1}],
+            [{"product_id": "p1", "quantity": 1}],
+            [{"product_id": "p1", "quantity": 1}],
+        ]
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": []},
+            order_history=history,
+            catalog=CATALOG,
+            budget=1000.0,
+        )
+        recurring = [r for r in result if r["tag"] == "recurring"]
+        assert any(r["product"]["id"] == "p1" for r in recurring)
+
+    def test_single_order_not_recurring(self, monkeypatch):
+        """Item appearing in only 1 order must NOT be tagged recurring."""
+        self._no_index(monkeypatch)
+        history = [[{"product_id": "p2", "quantity": 1}]]
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": []},
+            order_history=history,
+            catalog=CATALOG,
+            budget=1000.0,
+        )
+        recurring_ids = [r["product"]["id"] for r in result if r["tag"] == "recurring"]
+        assert "p2" not in recurring_ids
+
+    def test_budget_cap_respected(self, monkeypatch):
+        self._no_index(monkeypatch)
+        catalog_with_discount = CATALOG + [
+            _product("d1", "Aceite Girasol Natura", "Natura", "900ml",
+                     price=200.0, discount_pct=30.0),
+            _product("d2", "Arroz Gallo Oro", "Gallo Oro", "1kg",
+                     price=150.0, discount_pct=25.0, category="Almacén"),
+        ]
+        # budget of 160 — only the yogur (150) fits in must-haves; offers don't fit
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": ["yogur danone"]},
+            order_history=[],
+            catalog=catalog_with_discount,
+            budget=160.0,
+        )
+        total = sum(r["estimated_price"] for r in result if r["tag"] != "must_have")
+        assert total <= 160.0
+
+    def test_no_duplicate_products(self, monkeypatch):
+        """Same product in must_haves and order_history must appear only once."""
+        self._no_index(monkeypatch)
+        history = [
+            [{"product_id": "p5", "quantity": 1}],
+            [{"product_id": "p5", "quantity": 1}],
+        ]
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": ["yogur danone"]},
+            order_history=history,
+            catalog=CATALOG,
+            budget=1000.0,
+        )
+        product_ids = [r["product"]["id"] for r in result if r["product"]]
+        assert len(product_ids) == len(set(product_ids)), "Duplicate product IDs found"
+
+    def test_offer_tag_for_discounted_items(self, monkeypatch):
+        self._no_index(monkeypatch)
+        catalog_with_discount = CATALOG + [
+            _product("offer1", "Aceite Girasol Natura", "Natura", "900ml",
+                     price=100.0, discount_pct=40.0, category="Aceites"),
+        ]
+        result = generate_monthly_basket_candidates(
+            prefs={"must_haves": []},
+            order_history=[],
+            catalog=catalog_with_discount,
+            budget=500.0,
+        )
+        offer_ids = [r["product"]["id"] for r in result if r["tag"] == "offer"]
+        assert "offer1" in offer_ids

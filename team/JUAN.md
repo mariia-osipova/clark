@@ -9,7 +9,7 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 - `data/catalog_snapshot.json` — normalized catalog source
 - `data/product_semantic_index.json` — semantic index
 
-## Current version: VERSION3 active
+## Current version: VERSION4 active
 
 ### V0 ✅
 - [x] Implement the scraper/normalizer for catalog items (Carrefour public catalog)
@@ -34,12 +34,12 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 - [x] Strict verdict parsing in `_llm_judge()`; API errors return FAIL not PASS
 - [x] 27 unit tests passing, 1 skipped (semantic broad query — requires sentence-transformers install)
 
-### V3 🔜
-- [ ] Extend `rank_candidates()` discount weight (current `* 0.01` is too small for offers-aware ranking)
-- [ ] Define "materially different" candidate sets for clarification (brand mismatch, size delta >20%, price delta >15%)
-- [ ] Expand evals for ambiguous cola, size conflicts, close-brand choices
+### V3 ✅
+- [x] Extend `rank_candidates()` discount weight (current `* 0.01` is too small for offers-aware ranking)
+- [x] Define "materially different" candidate sets for clarification (brand mismatch, size delta >20%, price delta >15%)
+- [x] Expand evals for ambiguous cola, size conflicts, close-brand choices
 
-### V4 ⬜
+### V4 🔜
 - [ ] `resolve_product(query, quantity, catalog)` in `product_semantic_index.py`: wraps `search()` → `build_clarification_candidates()` → `find_alternatives()` into a single verdict dict (`resolved` / `needs_clarification` / `not_found`). Eliminates ambiguity judgment and substitute-vs-report decisions from the LLM.
 - [ ] `parse_quantity(message)` utility: regex + Spanish word-number map ("dos" → 2, "3 botellas" → 3, never confuses "1L" size with quantity).
 - [ ] `generate_monthly_basket_candidates(prefs, order_history, catalog, budget)`: rule-based algorithm. Pulls must-haves from preferences, counts frequency across order history, resolves each via `resolve_product()`, fills remaining budget with high-discount items. Returns candidates tagged `must_have` / `recurring` / `offer` / `suggested`. LLM presents — does not compute.
@@ -51,8 +51,8 @@ You are assisting Juan. His focus is catalog scraping, product normalization, se
 | V0 | Scraper, normalization, first-pass query filter | ✅ Done |
 | V1 | Product ranking for exact and near-exact matches, filter unavailable items, initial tests | ✅ Done |
 | V2 | Semantic retrieval in `product_semantic_index.py`, rank alternatives, expand eval suite | ✅ Done |
-| V3 | Extend ranking with discount/offer awareness, define clarification candidate sets | 🔜 Active |
-| V4 | `resolve_product`, `parse_quantity`, `generate_monthly_basket_candidates` — deterministic tool layer | ⬜ Upcoming |
+| V3 | Extend ranking with discount/offer awareness, define clarification candidate sets | ✅ Done |
+| V4 | `resolve_product`, `parse_quantity`, `generate_monthly_basket_candidates` — deterministic tool layer | 🔜 Active |
 
 ## How to help Juan
 - When he asks to scrape or update the catalog, write output to `data/catalog_snapshot.json` with normalized fields.
