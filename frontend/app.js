@@ -18,7 +18,6 @@ const audioState = {
   mediaRecorder: null,
   chunks: [],
   recording: false,
-  ttsEnabled: false,
 };
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
@@ -268,7 +267,6 @@ async function sendChat() {
 
     state.chatHistory.push({ role: 'assistant', content: reply });
     appendChatMsg('assistant', reply);
-    speak(reply);
 
     if (clarification) {
       showClarificationModal(clarification);
@@ -370,7 +368,6 @@ async function resolveClarification() {
     }
     state.chatHistory.push({ role: 'assistant', content: reply });
     appendChatMsg('assistant', reply);
-    speak(reply);
     if (clarification) {
       showClarificationModal(clarification);
     } else {
@@ -435,7 +432,6 @@ function bindModalCancel() {
 // ─── Audio (STT + TTS) ────────────────────────────────────────────────────────
 function bindAudio() {
   const micBtn = document.getElementById('btn-mic');
-  const ttsBtn = document.getElementById('btn-tts');
 
   if (!navigator.mediaDevices?.getUserMedia) {
     micBtn.disabled = true;
@@ -443,8 +439,6 @@ function bindAudio() {
   } else {
     micBtn.addEventListener('click', toggleRecording);
   }
-
-  ttsBtn.addEventListener('click', toggleTts);
 }
 
 async function toggleRecording() {
@@ -515,23 +509,6 @@ async function transcribeAudio(blob) {
   }
 }
 
-function toggleTts() {
-  audioState.ttsEnabled = !audioState.ttsEnabled;
-  const btn = document.getElementById('btn-tts');
-  btn.textContent = audioState.ttsEnabled ? '🔊' : '🔇';
-  btn.classList.toggle('btn--tts-active', audioState.ttsEnabled);
-  btn.title = audioState.ttsEnabled ? 'Desactivar texto a voz' : 'Activar texto a voz';
-  if (!audioState.ttsEnabled) speechSynthesis.cancel();
-}
-
-function speak(text) {
-  if (!audioState.ttsEnabled || !window.speechSynthesis) return;
-  speechSynthesis.cancel();
-  const utt = new SpeechSynthesisUtterance(text);
-  utt.lang = 'es-AR';
-  utt.rate = 1.0;
-  speechSynthesis.speak(utt);
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function esc(str) {

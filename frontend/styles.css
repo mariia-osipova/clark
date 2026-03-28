@@ -308,11 +308,6 @@ body {
   animation: pulse-record 1.2s ease infinite;
 }
 
-.btn--tts-active {
-  background: #eef2ff;
-  border-color: var(--color-primary);
-}
-
 /* Empty & loading states */
 .empty-state, .loading-state {
   grid-column: 1 / -1;
