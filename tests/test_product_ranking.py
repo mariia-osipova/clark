@@ -193,6 +193,7 @@ class TestSearchSemanticFallback:
         monkeypatch.setattr(mod, "_MODEL_CACHE", {})
 
         build_index(CATALOG)
+        assert index_file.exists(), "build_index() must write the index file"
         results = search("para el desayuno", CATALOG)
         assert len(results) >= 1, "Broad query should return at least one result via semantic search"
 
@@ -207,10 +208,14 @@ class TestFindAlternatives:
         assert "p4" not in ids, "OOS product p4 must not appear in alternatives"
 
     def test_same_category_filter(self):
-        """When category='Lácteos' all results must be from that category."""
-        results = find_alternatives("producto", CATALOG, category="Lácteos")
+        """When category='Lácteos', all results must be from that category.
+        Query 'yogur' has a Lácteos match (p5) and no matches in other categories,
+        so if filtering is broken and the full catalog is searched, we would still
+        get Lácteos results. Use a non-empty query to ensure filtering is exercised."""
+        results = find_alternatives("leche entera", CATALOG, category="Lácteos")
+        assert len(results) >= 1, "Should return at least one Lácteos result"
         for p in results:
-            assert p["category"] == "Lácteos"
+            assert p["category"] == "Lácteos", f"Expected Lácteos, got {p['category']}"
 
     def test_falls_back_cross_category(self):
         """If same-category pool is empty, return results from the full catalog."""
