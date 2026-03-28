@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindModalCancel();
   renderCart();
   loadCatalog();
+  syncCartFromServer();
 });
 
 // ─── Tabs ─────────────────────────────────────────────────────────────────────
@@ -90,10 +91,43 @@ function showCatalogError(msg) {
 }
 
 // ─── Cart ─────────────────────────────────────────────────────────────────────
-function addToCart(product, qty = 1) {
+
+async function syncCartFromServer() {
+  if (!state.sessionToken) return;
+  try {
+    const res = await fetch(`${API}/cart?session_id=${encodeURIComponent(state.sessionToken)}`);
+    const json = await res.json();
+    if (json.ok && Array.isArray(json.data.items)) {
+      // Server cart items are raw {product_id, quantity} — merge prices from local catalog cache
+      const catalogMap = Object.fromEntries(state.catalog.map(p => [p.id, p]));
+      const hydrated = json.data.items.map(item => {
+        const p = catalogMap[item.product_id];
+        return p ? {
+          product_id: item.product_id,
+          name: p.name,
+          brand: p.brand,
+          package_size: p.package_size,
+          price: p.price,
+          quantity: item.quantity,
+          image_url: p.image_url,
+        } : { ...item };
+      }).filter(i => i.name); // drop items not in catalog
+      state.cart = hydrated;
+      saveCart();
+      renderCart();
+    }
+  } catch (err) {
+    console.warn('cart sync from server failed', err);
+  }
+}
+
+async function addToCart(product, qty = 1) {
+  // Optimistic local update
+  const snapshot = state.cart.map(i => ({ ...i }));
   const existing = state.cart.find(i => i.product_id === product.id);
+  const newQty = existing ? existing.quantity + qty : qty;
   if (existing) {
-    existing.quantity += qty;
+    existing.quantity = newQty;
   } else {
     state.cart.push({
       product_id: product.id,
@@ -101,33 +135,79 @@ function addToCart(product, qty = 1) {
       brand: product.brand,
       package_size: product.package_size,
       price: product.price,
-      quantity: qty,
+      quantity: newQty,
       image_url: product.image_url,
     });
   }
   saveCart();
   renderCart();
+
+  // Sync to server; rollback on failure
+  try {
+    const res = await fetch(`${API}/cart`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ session_id: state.sessionToken, product_id: product.id, quantity: newQty }),
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error);
+  } catch (err) {
+    console.warn('addToCart server sync failed, rolling back', err);
+    state.cart = snapshot;
+    saveCart();
+    renderCart();
+  }
 }
 
-function removeFromCart(productId) {
+async function removeFromCart(productId) {
+  const snapshot = state.cart.map(i => ({ ...i }));
   state.cart = state.cart.filter(i => i.product_id !== productId);
   saveCart();
   renderCart();
   if (state.sessionToken) {
-    fetch(`${API}/cart/remove`, {
-      method: 'POST',
-      headers: jsonHeaders(),
-      body: JSON.stringify({ session_id: state.sessionToken, product_id: productId }),
-    }).catch(err => console.warn('cart remove sync failed', err));
+    try {
+      const res = await fetch(`${API}/cart/remove`, {
+        method: 'POST',
+        headers: jsonHeaders(),
+        body: JSON.stringify({ session_id: state.sessionToken, product_id: productId }),
+      });
+      const json = await res.json();
+      if (!json.ok) throw new Error(json.error);
+    } catch (err) {
+      console.warn('removeFromCart server sync failed, rolling back', err);
+      state.cart = snapshot;
+      saveCart();
+      renderCart();
+    }
   }
 }
 
-function updateCartQty(productId, delta) {
+async function updateCartQty(productId, delta) {
   const item = state.cart.find(i => i.product_id === productId);
   if (!item) return;
+  if (item.quantity + delta <= 0) {
+    await removeFromCart(productId);
+    return;
+  }
+  const snapshot = state.cart.map(i => ({ ...i }));
   item.quantity += delta;
-  if (item.quantity <= 0) removeFromCart(productId);
-  else { saveCart(); renderCart(); }
+  saveCart();
+  renderCart();
+
+  try {
+    const res = await fetch(`${API}/cart`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ session_id: state.sessionToken, product_id: productId, quantity: item.quantity }),
+    });
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error);
+  } catch (err) {
+    console.warn('updateCartQty server sync failed, rolling back', err);
+    state.cart = snapshot;
+    saveCart();
+    renderCart();
+  }
 }
 
 function setCart(items) {
@@ -193,8 +273,8 @@ async function checkout() {
   try {
     const res = await fetch(`${API}/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cart: state.cart }),
+      headers: jsonHeaders(),
+      body: JSON.stringify({ session_id: state.sessionToken }),
     });
     const json = await res.json();
     if (!json.ok) throw new Error(json.error);
@@ -305,6 +385,16 @@ async function sendChat() {
     } else if (cart) {
       setCart(cart);
     }
+
+    // Surface any items the server dropped (OOS/unknown) so localStorage stays clean
+    const dropped = json.data.dropped_items;
+    if (Array.isArray(dropped) && dropped.length > 0) {
+      dropped.forEach(name => {
+        state.cart = state.cart.filter(i => i.name !== name);
+      });
+      saveCart();
+      renderCart();
+    }
   } catch (err) {
     loadingEl.remove();
     appendChatMsg('assistant', `Error: ${err.message}`);
@@ -402,6 +492,12 @@ async function resolveClarification() {
     }
     state.chatHistory.push({ role: 'assistant', content: reply });
     appendChatMsg('assistant', reply);
+    const dropped2 = json.data.dropped_items;
+    if (Array.isArray(dropped2) && dropped2.length > 0) {
+      dropped2.forEach(name => { state.cart = state.cart.filter(i => i.name !== name); });
+      saveCart();
+      renderCart();
+    }
     if (clarification) {
       showClarificationModal(clarification);
     } else {

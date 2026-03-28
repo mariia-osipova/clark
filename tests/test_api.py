@@ -157,27 +157,30 @@ class TestEnvelope:
 
 class TestValidateOrderCart:
     def test_valid_item_passes_through(self, sample_catalog):
-        result = _validate_order_cart([{"product_id": "p1", "quantity": 2}], sample_catalog)
+        result, _ = _validate_order_cart([{"product_id": "p1", "quantity": 2}], sample_catalog)
         assert len(result) == 1
         assert result[0]["product_id"] == "p1"
         assert result[0]["quantity"] == 2
 
     def test_price_comes_from_catalog_not_client(self, sample_catalog):
-        result = _validate_order_cart([{"product_id": "p1", "quantity": 1, "price": 9999.0}], sample_catalog)
+        result, _ = _validate_order_cart([{"product_id": "p1", "quantity": 1, "price": 9999.0}], sample_catalog)
         assert result[0]["price"] == 350.0
 
     def test_unknown_product_is_dropped(self, sample_catalog):
-        assert _validate_order_cart([{"product_id": "nonexistent", "quantity": 1}], sample_catalog) == []
+        result, _ = _validate_order_cart([{"product_id": "nonexistent", "quantity": 1}], sample_catalog)
+        assert result == []
 
     def test_out_of_stock_is_dropped(self, sample_catalog):
-        assert _validate_order_cart([{"product_id": "p3", "quantity": 1}], sample_catalog) == []
+        result, dropped = _validate_order_cart([{"product_id": "p3", "quantity": 1}], sample_catalog)
+        assert result == []
+        assert dropped == ["Pan lactal Bimbo"]
 
     def test_quantity_floored_to_one(self, sample_catalog):
-        result = _validate_order_cart([{"product_id": "p1", "quantity": 0}], sample_catalog)
+        result, _ = _validate_order_cart([{"product_id": "p1", "quantity": 0}], sample_catalog)
         assert result[0]["quantity"] == 1
 
     def test_catalog_fields_populated(self, sample_catalog):
-        result = _validate_order_cart([{"product_id": "p2", "quantity": 1}], sample_catalog)
+        result, _ = _validate_order_cart([{"product_id": "p2", "quantity": 1}], sample_catalog)
         item = result[0]
         assert item["name"] == "Yogur frutilla Danone"
         assert item["brand"] == "Danone"
@@ -185,10 +188,13 @@ class TestValidateOrderCart:
         assert item["image_url"] == "https://example.com/yogur.jpg"
 
     def test_empty_cart_returns_empty(self, sample_catalog):
-        assert _validate_order_cart([], sample_catalog) == []
+        result, dropped = _validate_order_cart([], sample_catalog)
+        assert result == []
+        assert dropped == []
 
     def test_empty_catalog_drops_all(self):
-        assert _validate_order_cart([{"product_id": "p1", "quantity": 1}], []) == []
+        result, _ = _validate_order_cart([{"product_id": "p1", "quantity": 1}], [])
+        assert result == []
 
     def test_mixed_valid_and_invalid(self, sample_catalog):
         cart = [
@@ -196,26 +202,34 @@ class TestValidateOrderCart:
             {"product_id": "bad_id", "quantity": 1},
             {"product_id": "p3", "quantity": 1},  # out of stock
         ]
-        result = _validate_order_cart(cart, sample_catalog)
+        result, dropped = _validate_order_cart(cart, sample_catalog)
         assert len(result) == 1
         assert result[0]["product_id"] == "p1"
+        assert "Pan lactal Bimbo" in dropped
+
+    def test_dropped_names_returned(self, sample_catalog):
+        cart = [{"product_id": "p3", "quantity": 1}, {"product_id": "p2", "quantity": 1}]
+        result, dropped = _validate_order_cart(cart, sample_catalog)
+        assert len(result) == 1
+        assert result[0]["product_id"] == "p2"
+        assert dropped == ["Pan lactal Bimbo"]
 
 
 # ─── Total computation tests ──────────────────────────────────────────────────
 
 class TestOrderTotal:
     def test_total_uses_catalog_price(self, sample_catalog):
-        validated = _validate_order_cart([{"product_id": "p1", "quantity": 2}], sample_catalog)
+        validated, _ = _validate_order_cart([{"product_id": "p1", "quantity": 2}], sample_catalog)
         total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
         assert total == 700.0
 
     def test_total_ignores_client_price(self, sample_catalog):
-        validated = _validate_order_cart([{"product_id": "p1", "quantity": 1, "price": 1.0}], sample_catalog)
+        validated, _ = _validate_order_cart([{"product_id": "p1", "quantity": 1, "price": 1.0}], sample_catalog)
         total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
         assert total == 350.0
 
     def test_empty_cart_total_is_zero(self, sample_catalog):
-        validated = _validate_order_cart([], sample_catalog)
+        validated, _ = _validate_order_cart([], sample_catalog)
         total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
         assert total == 0.0
 
@@ -224,7 +238,7 @@ class TestOrderTotal:
             {"product_id": "p1", "quantity": 1},  # 350
             {"product_id": "p2", "quantity": 2},  # 360
         ]
-        validated = _validate_order_cart(cart, sample_catalog)
+        validated, _ = _validate_order_cart(cart, sample_catalog)
         total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
         assert total == 710.0
 
@@ -255,27 +269,56 @@ class TestCatalogEndpoint:
 # ─── Integration: orders endpoint ────────────────────────────────────────────
 
 class TestOrdersEndpoint:
-    def test_post_returns_order_id(self, test_server):
-        result, status = _post(f"{test_server}/api/v1/orders", {"cart": []})
+    """V4: checkout reads from server session cart, not request body."""
+
+    def _place_order(self, base_url: str, sess: str, sample_catalog):
+        """Helper: add p1 to server cart and checkout (with mocked catalog)."""
+        import backend.app as app_module
+        _post(f"{base_url}/api/v1/cart", {"session_id": sess, "product_id": "p1", "quantity": 1})
+        with patch.object(app_module, "_load_catalog", return_value=sample_catalog):
+            return _post(f"{base_url}/api/v1/orders", {}, headers={"X-Session-Token": sess})
+
+    def test_post_requires_session_id(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/orders", {})
+        assert status == 400
+        assert result["ok"] is False
+
+    def test_post_empty_server_cart_returns_400(self, test_server, sample_catalog):
+        import backend.app as app_module
+        with patch.object(app_module, "_load_catalog", return_value=sample_catalog):
+            result, status = _post(f"{test_server}/api/v1/orders", {},
+                                   headers={"X-Session-Token": "orders-empty-sess"})
+        assert status == 400
+        assert result["ok"] is False
+
+    def test_post_returns_order_id(self, test_server, sample_catalog):
+        result, status = self._place_order(test_server, "orders-sess-1", sample_catalog)
+        assert status == 200
         assert result["ok"] is True
         assert "order_id" in result["data"]
 
-    def test_post_empty_cart_total_is_zero(self, test_server):
-        result, _ = _post(f"{test_server}/api/v1/orders", {"cart": []})
-        assert result["data"]["total"] == 0.0
+    def test_post_total_computed_from_catalog(self, test_server, sample_catalog):
+        import backend.app as app_module
+        sess = "orders-total-sess"
+        _post(f"{test_server}/api/v1/cart", {"session_id": sess, "product_id": "p1", "quantity": 2})
+        with patch.object(app_module, "_load_catalog", return_value=sample_catalog):
+            result, status = _post(f"{test_server}/api/v1/orders", {},
+                                   headers={"X-Session-Token": sess})
+        assert status == 200
+        assert result["data"]["total"] == 700.0  # 350 * 2
 
     def test_get_returns_orders_list(self, test_server):
         result = _get(f"{test_server}/api/v1/orders")
         assert result["ok"] is True
         assert isinstance(result["data"]["orders"], list)
 
-    def test_posted_order_appears_in_get(self, test_server):
-        _post(f"{test_server}/api/v1/orders", {"cart": []})
+    def test_posted_order_appears_in_get(self, test_server, sample_catalog):
+        self._place_order(test_server, "orders-appear-sess", sample_catalog)
         result = _get(f"{test_server}/api/v1/orders")
         assert len(result["data"]["orders"]) >= 1
 
-    def test_order_has_required_fields(self, test_server):
-        _post(f"{test_server}/api/v1/orders", {"cart": []})
+    def test_order_has_required_fields(self, test_server, sample_catalog):
+        self._place_order(test_server, "orders-fields-sess", sample_catalog)
         orders = _get(f"{test_server}/api/v1/orders")["data"]["orders"]
         order = orders[0]
         assert "id" in order
@@ -283,9 +326,9 @@ class TestOrdersEndpoint:
         assert "created_at" in order
         assert "items" in order
 
-    def test_multiple_orders_all_returned(self, test_server):
-        _post(f"{test_server}/api/v1/orders", {"cart": []})
-        _post(f"{test_server}/api/v1/orders", {"cart": []})
+    def test_multiple_orders_all_returned(self, test_server, sample_catalog):
+        self._place_order(test_server, "orders-multi-1", sample_catalog)
+        self._place_order(test_server, "orders-multi-2", sample_catalog)
         result = _get(f"{test_server}/api/v1/orders")
         assert len(result["data"]["orders"]) >= 2
 
@@ -407,9 +450,10 @@ class TestChatEndpoint:
             _graph_state(reply="Listo, agregué Leche entera La Serenísima 1L al carrito."),
         ]
 
-        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), patch(
-            "backend.chat_agent_agentic._build_graph", return_value=mock_app
-        ):
+        import backend.app as app_module
+        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), \
+             patch("backend.chat_agent_agentic._build_graph", return_value=mock_app), \
+             patch.object(app_module, "_load_catalog", return_value=sample_catalog):
             first, status1 = _post(
                 f"{test_server}/api/v1/chat",
                 {"message": "quiero leche", "history": [], "cart": []},

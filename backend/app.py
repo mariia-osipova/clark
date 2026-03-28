@@ -14,7 +14,17 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from backend.db import get_db
+from backend.db import (
+    get_db,
+    get_session_cart,
+    upsert_session_cart_item,
+    remove_session_cart_item,
+    save_pending_clarification,
+    resolve_pending_clarification,
+)
+
+# Fail fast if Juan's function is missing — no silent fallback
+from backend.product_semantic_index import generate_monthly_basket_candidates
 
 logging.basicConfig(
     stream=sys.stderr,
@@ -35,16 +45,23 @@ def _load_catalog() -> list:
         return json.load(f)
 
 
-def _validate_order_cart(cart: list, catalog: list) -> list:
-    """Validate cart items against catalog: drop unknowns and out-of-stock, enforce catalog prices."""
+def _validate_order_cart(cart: list, catalog: list) -> tuple[list, list]:
+    """Validate cart items against catalog.
+    Returns (validated_items, dropped_item_names).
+    Drops unknowns and out-of-stock; enforces catalog prices.
+    """
     catalog_map = {p["id"]: p for p in catalog}
     validated = []
+    dropped = []
     for item in cart:
         pid = item.get("product_id")
         product = catalog_map.get(pid)
         if not product:
+            if item.get("name"):
+                dropped.append(item["name"])
             continue
         if product.get("available_quantity", 0) == 0:
+            dropped.append(product.get("name", pid))
             continue
         try:
             qty = max(1, int(item.get("quantity", 1)))
@@ -59,7 +76,7 @@ def _validate_order_cart(cart: list, catalog: list) -> list:
             "quantity": qty,
             "image_url": product.get("image_url", ""),
         })
-    return validated
+    return validated, dropped
 
 
 def _assemble_chat_context() -> str | None:
@@ -102,35 +119,6 @@ def _assemble_chat_context() -> str | None:
         pass  # context is best-effort, never block a chat turn
 
     return "\n\n".join(parts) if parts else None
-
-
-def _generate_basket_stub(plan: dict, order_history: list, catalog: list) -> list:
-    """Rule-based fallback when Juan's generate_monthly_basket_candidates is not yet available.
-    Returns must-have items from the plan followed by frequently-bought items from history."""
-    catalog_map = {p["id"]: p for p in catalog}
-    seen: set = set()
-    result = []
-
-    for pid in plan.get("priority_items", []):
-        if pid in catalog_map and pid not in seen:
-            result.append({"product_id": pid, "quantity": 1, "tag": "must_have"})
-            seen.add(pid)
-
-    freq: dict = {}
-    for order in order_history:
-        for item in order:
-            pid = item.get("product_id")
-            if pid:
-                freq[pid] = freq.get(pid, 0) + item.get("quantity", 1)
-
-    for pid, _ in sorted(freq.items(), key=lambda x: -x[1]):
-        if pid not in seen and pid in catalog_map:
-            result.append({"product_id": pid, "quantity": 1, "tag": "recurring"})
-            seen.add(pid)
-        if len(result) >= 20:
-            break
-
-    return result
 
 
 def _validate_clarification_response(raw) -> dict | None:
@@ -291,40 +279,88 @@ class RequestHandler(BaseHTTPRequestHandler):
             _log.error("catalog error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
+    # ─── Chat (Phase 4: split into normalize / dispatch / build-response) ─────
+
+    def _normalize_chat_request(self, body: dict) -> tuple:
+        """Validate and coerce all request fields. Returns (message, history, cart, clarification_response, session_id, action, error)."""
+        message, history, cart, clarification_response, err = _validate_chat_body(body)
+        if err:
+            return None, None, None, None, None, None, err
+        session_id = str(body.get("session_id", "") or self.headers.get("X-Session-Token", "") or "")
+        action = str(body.get("action", "") or "")
+        return message, history, cart, clarification_response, session_id, action, None
+
+    def _dispatch_chat(self, message, history, cart, clarification_response, session_id, action, req_id) -> dict:
+        """Call handle_chat() and return its raw result dict."""
+        from backend.chat_agent_agentic import handle_chat
+        return handle_chat(
+            message=message,
+            history=history,
+            cart=cart,
+            clarification_response=clarification_response,
+            context=_assemble_chat_context(),
+            session_id=session_id,
+            action=action or None,
+        )
+
+    def _build_chat_response(self, result: dict, session_id: str, dropped_items: list) -> dict:
+        """Hydrate server cart, add dropped_items, return final data dict."""
+        if result.get("cart") is not None:
+            catalog = _load_catalog()
+            server_cart = get_session_cart(session_id, catalog) if session_id else result["cart"]
+            result["cart"] = server_cart
+        result["dropped_items"] = dropped_items
+        return result
+
     def _handle_chat(self, body: dict):
         req_id = str(uuid.uuid4())
-        message, history, cart, clarification_response, err = _validate_chat_body(body)
+        message, history, cart, clarification_response, session_id, action, err = self._normalize_chat_request(body)
         if err:
             _log.warning("chat [%s] bad request: %s", req_id, err)
             self.send_json(envelope(error=err, request_id=req_id), 400)
             return
-        session_id = str(body.get("session_id", "") or self.headers.get("X-Session-Token", "") or "")
-        action = str(body.get("action", "") or "")
+
+        # Validate incoming cart; surface dropped items to frontend
+        catalog = _load_catalog()
+        _, dropped_items = _validate_order_cart(cart, catalog)
+
+        # Phase 2: validate clarification_response against persisted state
+        if clarification_response and session_id:
+            pid = clarification_response["pending_request_id"]
+            if not resolve_pending_clarification(session_id, pid):
+                _log.warning("chat [%s] stale or unknown clarification pending_request_id=%r", req_id, pid)
+                self.send_json(envelope(error="stale or unknown clarification request", request_id=req_id), 400)
+                return
+
         try:
-            from backend.chat_agent_agentic import handle_chat
             _log.info("chat [%s] message=%r clarification=%s", req_id, message[:60], clarification_response is not None)
-            result = handle_chat(
-                message=message,
-                history=history,
-                cart=cart,
-                clarification_response=clarification_response,
-                context=_assemble_chat_context(),
-                session_id=session_id,
-                action=action or None,
-            )
-            _log.info("chat [%s] ok cart_items=%d clarification=%s", req_id, len(result.get("cart") or []), result.get("clarification") is not None)
-            self.send_json(envelope(data=result, request_id=req_id))
+            result = self._dispatch_chat(message, history, cart, clarification_response, session_id, action, req_id)
+
+            # Phase 2: persist issued clarification
+            clarification = result.get("clarification")
+            if clarification and session_id:
+                save_pending_clarification(
+                    session_id=session_id,
+                    pending_request_id=clarification.get("pending_request_id", ""),
+                    original_query=clarification.get("question", ""),
+                    options=[o.get("id", "") for o in (clarification.get("options") or [])],
+                )
+
+            data = self._build_chat_response(result, session_id, dropped_items)
+            _log.info("chat [%s] ok cart_items=%d clarification=%s dropped=%d",
+                      req_id, len(data.get("cart") or []), data.get("clarification") is not None, len(dropped_items))
+            self.send_json(envelope(data=data, request_id=req_id))
         except Exception as e:
             _log.error("chat [%s] error: %s", req_id, e, exc_info=True)
             self.send_json(envelope(error=str(e), request_id=req_id), 500)
 
     def _handle_auth_register(self, body: dict):
-        # TODO (Nacho): implement registration with SQLite
-        self.send_json(envelope(error="Not implemented yet"), 501)
+        # NOT IMPLEMENTED — auth is stubbed until after the hackathon
+        self.send_json(envelope(error="Not implemented"), 501)
 
     def _handle_auth_login(self, body: dict):
-        # TODO (Nacho): implement login with SQLite
-        self.send_json(envelope(error="Not implemented yet"), 501)
+        # NOT IMPLEMENTED — auth is stubbed until after the hackathon
+        self.send_json(envelope(error="Not implemented"), 501)
 
     def _handle_orders_get(self):
         try:
@@ -353,25 +389,29 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_orders_post(self, body: dict):
-        cart = body.get("cart", [])
-        if not isinstance(cart, list):
-            self.send_json(envelope(error="cart must be a list"), 400)
+        """Bug #3 fix: read cart from server session_carts, not request body."""
+        session_id = str(body.get("session_id", "") or self.headers.get("X-Session-Token", "") or "")
+        if not session_id:
+            self.send_json(envelope(error="session_id or X-Session-Token required"), 400)
             return
         try:
             catalog = _load_catalog()
-            validated = _validate_order_cart(cart, catalog)
-            total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
+            cart = get_session_cart(session_id, catalog)
+            if not cart:
+                self.send_json(envelope(error="session cart is empty"), 400)
+                return
+            total = round(sum(i["price"] * i["quantity"] for i in cart), 2)
             order_id = str(uuid.uuid4())[:8]
             conn = get_db()
             try:
                 conn.execute(
                     "INSERT INTO orders (id, cart_json, total) VALUES (?, ?, ?)",
-                    (order_id, json.dumps(validated), total),
+                    (order_id, json.dumps(cart), total),
                 )
                 conn.commit()
             finally:
                 conn.close()
-            _log.info("order [%s] placed items=%d total=%.2f", order_id, len(validated), total)
+            _log.info("order [%s] placed items=%d total=%.2f", order_id, len(cart), total)
             self.send_json(envelope(data={"order_id": order_id, "total": total}))
         except Exception as e:
             _log.error("orders POST error: %s", e, exc_info=True)
@@ -424,14 +464,14 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_json(envelope(error="session_id query param required"), 400)
             return
         try:
-            conn = get_db()
+            rows_conn = get_db()
             try:
-                rows = conn.execute(
+                rows = rows_conn.execute(
                     "SELECT product_id, quantity FROM session_carts WHERE session_id = ?",
                     (session_id,),
                 ).fetchall()
             finally:
-                conn.close()
+                rows_conn.close()
             items = [{"product_id": r["product_id"], "quantity": r["quantity"]} for r in rows]
             self.send_json(envelope(data={"session_id": session_id, "items": items}))
         except Exception as e:
@@ -439,6 +479,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_cart_add(self, body: dict):
+        """Bug #4 fix entry point — uses EXCLUSIVE transaction via upsert_session_cart_item."""
         session_id = body.get("session_id", "")
         product_id = body.get("product_id", "")
         if not session_id or not product_id:
@@ -449,39 +490,21 @@ class RequestHandler(BaseHTTPRequestHandler):
         except (ValueError, TypeError):
             qty = 1
         try:
-            conn = get_db()
-            try:
-                conn.execute(
-                    """INSERT INTO session_carts (session_id, product_id, quantity)
-                       VALUES (?, ?, ?)
-                       ON CONFLICT(session_id, product_id) DO UPDATE SET
-                           quantity = excluded.quantity""",
-                    (session_id, product_id, qty),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+            upsert_session_cart_item(session_id, product_id, qty)
             self.send_json(envelope(data={"session_id": session_id, "product_id": product_id, "quantity": qty}))
         except Exception as e:
             _log.error("cart add error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_cart_remove(self, body: dict):
+        """Uses EXCLUSIVE transaction via remove_session_cart_item."""
         session_id = body.get("session_id", "")
         product_id = body.get("product_id", "")
         if not session_id or not product_id:
             self.send_json(envelope(error="session_id and product_id required"), 400)
             return
         try:
-            conn = get_db()
-            try:
-                conn.execute(
-                    "DELETE FROM session_carts WHERE session_id = ? AND product_id = ?",
-                    (session_id, product_id),
-                )
-                conn.commit()
-            finally:
-                conn.close()
+            remove_session_cart_item(session_id, product_id)
             self.send_json(envelope(data={"removed": True}))
         except Exception as e:
             _log.error("cart remove error: %s", e, exc_info=True)
@@ -578,6 +601,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_json(envelope(error=str(e)), 500)
 
     def _handle_recurring_plan_generate(self):
+        """Phase 3: calls generate_monthly_basket_candidates() — no stub fallback."""
         try:
             conn = get_db()
             try:
@@ -585,7 +609,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     "SELECT * FROM recurring_plans WHERE id='default'"
                 ).fetchone()
                 order_rows = conn.execute(
-                    "SELECT cart_json, total, created_at FROM orders ORDER BY created_at DESC LIMIT 10"
+                    "SELECT cart_json FROM orders ORDER BY created_at DESC LIMIT 10"
                 ).fetchall()
             finally:
                 conn.close()
@@ -595,14 +619,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                 plan = {
                     "household_size": plan_row["household_size"],
                     "monthly_budget": plan_row["monthly_budget"],
-                    "priority_items": json.loads(plan_row["priority_items"]),
+                    # map priority_items → must_haves (Juan's function key)
+                    "must_haves": json.loads(plan_row["priority_items"]),
                     "preferred_brands": json.loads(plan_row["preferred_brands"]),
                     "strict_brand": bool(plan_row["strict_brand"]),
                     "excluded_categories": json.loads(plan_row["excluded_categories"]),
                     "notes": plan_row["notes"],
                 }
 
-            order_history = []
+            order_history: list = []
             for r in order_rows:
                 try:
                     items = json.loads(r["cart_json"])
@@ -611,32 +636,26 @@ class RequestHandler(BaseHTTPRequestHandler):
                 order_history.append(items if isinstance(items, list) else [])
 
             catalog = _load_catalog()
+            budget = plan.get("monthly_budget") or float("inf")
 
-            try:
-                from backend.product_semantic_index import generate_monthly_basket_candidates
-                candidates = generate_monthly_basket_candidates(
-                    prefs=plan,
-                    order_history=order_history,
-                    catalog=catalog,
-                    budget=plan.get("monthly_budget") or float("inf"),
-                )
-            except (ImportError, AttributeError):
-                # Juan's function not yet available — use rule-based stub
-                candidates = _generate_basket_stub(plan, order_history, catalog)
+            candidates = generate_monthly_basket_candidates(
+                prefs=plan,
+                order_history=order_history,
+                catalog=catalog,
+                budget=budget,
+            )
 
-            catalog_map = {p["id"]: p for p in catalog}
             proposed_cart = []
             for c in candidates:
-                pid = c.get("product_id") or c.get("id")
-                product = catalog_map.get(pid)
-                if not product or product.get("available_quantity", 0) == 0:
+                product = c.get("product")
+                if not product:
                     continue
                 try:
                     qty = max(1, int(c.get("quantity", 1)))
                 except (ValueError, TypeError):
                     qty = 1
                 proposed_cart.append({
-                    "product_id": pid,
+                    "product_id": product["id"],
                     "name": product.get("name", ""),
                     "brand": product.get("brand", ""),
                     "package_size": product.get("package_size", ""),
@@ -647,8 +666,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 })
 
             total = round(sum(i["price"] * i["quantity"] for i in proposed_cart), 2)
-            _log.info("recurring-plan generate: %d items total=%.2f", len(proposed_cart), total)
-            self.send_json(envelope(data={"proposed_cart": proposed_cart, "total": total}))
+            budget_exceeded = budget != float("inf") and total > budget
+            _log.info("recurring-plan generate: %d items total=%.2f exceeded=%s",
+                      len(proposed_cart), total, budget_exceeded)
+            self.send_json(envelope(data={
+                "proposed_cart": proposed_cart,
+                "total": total,
+                "budget_exceeded": budget_exceeded,
+            }))
         except Exception as e:
             _log.error("recurring plan generate error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
@@ -660,7 +685,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         try:
             catalog = _load_catalog()
-            validated = _validate_order_cart(proposed_cart, catalog)
+            validated, _ = _validate_order_cart(proposed_cart, catalog)
             total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
             order_id = str(uuid.uuid4())[:8]
             conn = get_db()
