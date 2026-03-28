@@ -2,7 +2,7 @@
 
 ## Project
 AI-powered shopping assistant. See [plan.md](plan.md) for full version roadmap.
-Current target: **VERSION0** — catalog scrape, basic shell, simple talking agent.
+Current target: **VERSION1** — agent can add specific products to the cart.
 
 ## Team identity
 When a team member introduces themselves, read their file immediately before doing anything else:

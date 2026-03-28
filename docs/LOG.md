@@ -2,6 +2,12 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-27 — Jeremias — VERSION0 unite gate passed, starting VERSION1
+
+**Type:** version
+
+Merged jere, Juan, and nacho branches into main. All 26 tests pass. VERSION0 unite gate confirmed: catalog endpoint returns 50 normalized products, frontend shell renders, chat endpoint responds. Pre-commit hook installed — pytest must pass before every commit. CLAUDE.md updated to VERSION1 target.
+
 ---
 
 ## 2026-03-27 — Nacho — SQLite minimum schema
