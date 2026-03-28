@@ -54,7 +54,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
-        path = parsed.path.rstrip("/")
+        path = parsed.path.rstrip("/") or "/"
 
         if path == "/api/v1/catalog":
             self._handle_catalog()
