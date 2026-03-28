@@ -162,6 +162,12 @@ def envelope(data=None, error=None, request_id=None):
 
 
 class RequestHandler(BaseHTTPRequestHandler):
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client disconnected mid-request — nothing to do
+
     def log_message(self, format, *args):
         _log.info("%s %s", self.command, self.path)
 
@@ -183,9 +189,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Session-Token")
 
     def do_OPTIONS(self):
-        self.send_response(204)
-        self._cors_headers()
-        self.end_headers()
+        try:
+            self.send_response(204)
+            self._cors_headers()
+            self.end_headers()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -363,21 +372,30 @@ class RequestHandler(BaseHTTPRequestHandler):
         try:
             file_path.relative_to(frontend_root)
         except ValueError:
-            self.send_response(403)
-            self.end_headers()
+            try:
+                self.send_response(403)
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             return
         if not file_path.exists() or not file_path.is_file():
-            self.send_response(404)
-            self.end_headers()
+            try:
+                self.send_response(404)
+                self.end_headers()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             return
         content_type = _guess_type(file_path.suffix)
         with open(file_path, "rb") as f:
             data = f.read()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     # ─── Helpers ─────────────────────────────────────────────────────────────
 
