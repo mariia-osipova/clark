@@ -124,6 +124,10 @@ class ShopState(TypedDict):
     checkout_result: dict | None         # {order_id, total, item_count} or {error: str}
     checkout_nudge_shown: bool           # True after nudge fires once — skip on subsequent checkout turns
 
+    # Cart profile output
+    profile_name: str                    # extracted by classifier; "" for non-profile turns
+    profile_action_result: dict | None   # {status, profile_name, loaded_items?, available_profiles?}
+
     # User context — loaded from data/user_profile.json, read-only inside graph
     user_profile: dict
 
@@ -378,8 +382,8 @@ def _read_session_cart(session_id: str, catalog: list[dict]) -> list[dict]:
 
 _CLASSIFY_SYSTEM = (
     "Sos un asistente de compras. Analizá el mensaje del usuario y respondé SOLO con JSON:\n"
-    '{"turn_kind": "shopping|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection|checkout", '
-    '"planned_items": [{"query": "nombre producto", "quantity": 1}]}\n'
+    '{"turn_kind": "shopping|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection|checkout|save_cart_profile|load_cart_profile", '
+    '"planned_items": [{"query": "nombre producto", "quantity": 1}], "profile_name": ""}\n'
     "Para mensajes que NO son compras (saludos, preguntas generales), usá turn_kind=smalltalk "
     "y planned_items=[].\n"
     'Para generar canasta mensual, usá turn_kind=monthly_basket y planned_items=[].\n'
@@ -423,7 +427,19 @@ _CLASSIFY_SYSTEM = (
     'Sugerencia con elección → {"turn_kind":"suggestion_reply","planned_items":[{"query":"helado de chocolate","quantity":1}]}\n'
     "\n"
     '"eso no es helado" / "no, busco otra cosa" → '
-    '{"turn_kind":"suggestion_rejection","planned_items":[]}\n'
+    '{"turn_kind":"suggestion_rejection","planned_items":[],"profile_name":""}\n'
+    "\n"
+    "REGLA PERFILES DE CARRITO:\n"
+    "- Si el usuario quiere guardar su carrito con un nombre "
+    "(ej: 'guardá este carrito como compra semanal', 'salvá mi carrito como despensa') "
+    "→ turn_kind=save_cart_profile, profile_name=<nombre extraído>, planned_items=[].\n"
+    "- Si el usuario quiere cargar un perfil guardado "
+    "(ej: 'cargá mi perfil compra semanal', 'usá mi lista de siempre', 'cargá despensa') "
+    "→ turn_kind=load_cart_profile, profile_name=<nombre extraído>, planned_items=[].\n"
+    "- En todos los demás casos, profile_name debe ser \"\" (string vacío).\n"
+    "\n"
+    'Guardar perfil → {"turn_kind":"save_cart_profile","planned_items":[],"profile_name":"compra semanal"}\n'
+    'Cargar perfil → {"turn_kind":"load_cart_profile","planned_items":[],"profile_name":"compra semanal"}\n'
     "\n"
     "SOLO JSON, sin markdown ni texto adicional."
 )
@@ -471,6 +487,7 @@ def _build_graph(catalog: list[dict], api_key: str):
             return {
                 "turn_kind": parsed.get("turn_kind", "smalltalk"),
                 "planned_items": planned_items,
+                "profile_name": str(parsed.get("profile_name", "") or "").strip(),
             }
         except Exception:
             _log.exception("classify_turn failed, defaulting to smalltalk")
@@ -696,6 +713,10 @@ def _build_graph(catalog: list[dict], api_key: str):
         if pending:
             return {"reply": pending["question"]}
 
+        # Deterministic node already wrote reply (profile save/load, etc.) — don't overwrite
+        if state.get("reply"):
+            return {}
+
         # Forgotten item suggestion — deterministic, no LLM needed
         suggestion = state.get("forgotten_suggestion")
         if suggestion:
@@ -859,6 +880,125 @@ def _build_graph(catalog: list[dict], api_key: str):
             }
         }
 
+    # ── Node: save_cart_profile_node ──────────────────────────────────────────
+    def save_cart_profile_node(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Saves the current cart under profile_name in user_profile.json."""
+        from backend.user_profile import get_cart_profiles, save_cart_profiles
+
+        name = (state.get("profile_name") or "").strip()
+        if not name:
+            return {
+                "reply": "No entendí el nombre del perfil. Decime cómo querés guardarlo, "
+                         "por ejemplo: 'guardá este carrito como compra semanal'.",
+                "profile_action_result": {"status": "error", "profile_name": ""},
+            }
+
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        current_cart = _read_session_cart(sid, catalog)
+
+        if not current_cart:
+            return {
+                "reply": "El carrito está vacío. Agregá productos antes de guardar un perfil.",
+                "profile_action_result": {"status": "empty_cart", "profile_name": name},
+            }
+
+        minimal_items = [
+            {"product_id": item["product_id"], "quantity": item["quantity"]}
+            for item in current_cart
+        ]
+        profiles = get_cart_profiles()
+        profiles[name] = minimal_items
+        save_cart_profiles(profiles)
+
+        count = len(minimal_items)
+        s = "s" if count != 1 else ""
+        return {
+            "reply": f"Perfil '{name}' guardado con {count} producto{s}. "
+                     f"Podés cargarlo cuando quieras con 'cargá mi perfil {name}'.",
+            "profile_action_result": {"status": "saved", "profile_name": name},
+        }
+
+    # ── Node: load_cart_profile_node ──────────────────────────────────────────
+    def load_cart_profile_node(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Loads a saved cart profile by name into the session cart."""
+        import unicodedata
+        from backend.user_profile import get_cart_profiles
+
+        def _normalize(s: str) -> str:
+            s = s.lower().strip()
+            return "".join(
+                c for c in unicodedata.normalize("NFD", s)
+                if unicodedata.category(c) != "Mn"
+            )
+
+        requested = (state.get("profile_name") or "").strip()
+        if not requested:
+            return {
+                "reply": "No entendí qué perfil querés cargar. Decime el nombre, "
+                         "por ejemplo: 'cargá mi perfil compra semanal'.",
+                "profile_action_result": {"status": "error", "profile_name": ""},
+            }
+
+        profiles = get_cart_profiles()
+        norm_req = _normalize(requested)
+        matched_key = next((k for k in profiles if _normalize(k) == norm_req), None)
+
+        if matched_key is None:
+            available = list(profiles.keys())
+            if available:
+                names_str = ", ".join(f"'{n}'" for n in available)
+                reply = (f"No encontré un perfil llamado '{requested}'. "
+                         f"Tus perfiles guardados son: {names_str}.")
+            else:
+                reply = (f"No encontré un perfil llamado '{requested}' "
+                         f"y no tenés perfiles guardados todavía.")
+            return {
+                "reply": reply,
+                "profile_action_result": {
+                    "status": "not_found",
+                    "profile_name": requested,
+                    "available_profiles": available,
+                },
+            }
+
+        saved_items = profiles[matched_key]
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        catalog_by_id = {p["id"]: p for p in catalog}
+
+        valid_items: list[tuple[str, int]] = []
+        dropped = 0
+        for entry in saved_items:
+            pid = entry.get("product_id", "")
+            product = catalog_by_id.get(pid)
+            if product and product.get("available_quantity", 1) > 0:
+                valid_items.append((pid, entry.get("quantity", 1)))
+            else:
+                dropped += 1
+
+        if valid_items:
+            _write_session_cart_items(sid, valid_items)
+
+        count = len(valid_items)
+        s = "s" if count != 1 else ""
+
+        if not valid_items:
+            reply = (f"Cargué el perfil '{matched_key}' pero ningún producto "
+                     f"está disponible en el catálogo ahora mismo.")
+        elif dropped:
+            reply = (f"Perfil '{matched_key}' cargado. Agregué {count} producto{s} al carrito. "
+                     f"{dropped} producto{'s' if dropped != 1 else ''} no estaba{'n' if dropped != 1 else ''} disponible{'s' if dropped != 1 else ''}.")
+        else:
+            reply = f"Perfil '{matched_key}' cargado. Agregué {count} producto{s} al carrito."
+
+        return {
+            "reply": reply,
+            "profile_action_result": {
+                "status": "loaded",
+                "profile_name": matched_key,
+                "loaded_items": count,
+            },
+        }
+
     # ── Routing ────────────────────────────────────────────────────────────────
     def route_after_classify(state: ShopState) -> str:
         turn_kind = state.get("turn_kind", "smalltalk")
@@ -870,6 +1010,10 @@ def _build_graph(catalog: list[dict], api_key: str):
             return "reject_suggestion"
         if turn_kind == "checkout":
             return "check_forgotten_items"
+        if turn_kind == "save_cart_profile":
+            return "save_cart_profile_node"
+        if turn_kind == "load_cart_profile":
+            return "load_cart_profile_node"
         return "resolve_items"
 
     def route_after_forgotten_check(state: ShopState) -> str:
@@ -890,6 +1034,8 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_node("emit_clarification", emit_clarification)
     graph.add_node("check_forgotten_items", check_forgotten_items)
     graph.add_node("execute_checkout", execute_checkout)
+    graph.add_node("save_cart_profile_node", save_cart_profile_node)
+    graph.add_node("load_cart_profile_node", load_cart_profile_node)
     graph.add_node("summarize", summarize)
 
     graph.add_edge(START, "classify_turn")
@@ -901,6 +1047,8 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_edge("emit_clarification", "summarize")
     graph.add_conditional_edges("check_forgotten_items", route_after_forgotten_check)
     graph.add_edge("execute_checkout", "summarize")
+    graph.add_edge("save_cart_profile_node", "summarize")
+    graph.add_edge("load_cart_profile_node", "summarize")
     graph.add_edge("summarize", END)
 
     return graph.compile(checkpointer=_get_checkpointer())
@@ -1199,6 +1347,8 @@ def handle_chat(
         "forgotten_suggestion": None,
         "checkout_result": None,
         "checkout_nudge_shown": prior_nudge_shown,
+        "profile_name": "",
+        "profile_action_result": None,
         "session_id": session_id,
         "initial_cart": initial_cart,
         "history": _trim_history(history),
