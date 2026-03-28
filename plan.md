@@ -4,6 +4,19 @@
 
 This plan follows the real codebase shape that already exists today, but it is trimmed for a hackathon. Every item below should either improve the live demo, reduce demo risk, or unlock the next visible version. Anything that does not materially help the demo is intentionally left out.
 
+## Current status
+
+| Version | Status | Branch merged to main |
+|---|---|---|
+| VERSION0 | ✅ Complete | Yes |
+| VERSION1 | ✅ Complete | Yes |
+| VERSION2 | ✅ Complete (code) — demo blocked on catalog data | Yes |
+| VERSION3 | 🔜 Next | — |
+| VERSION4 | ⬜ Upcoming | — |
+
+**Active work:** V2 demo validation → then V3 (clarification popup + offers-aware ranking).
+**Immediate blocker:** `data/catalog_snapshot.json` and `data/product_semantic_index.json` must be generated before any live demo.
+
 ## Actual stack to keep during the hackathon
 
 ### Frontend
@@ -39,7 +52,7 @@ This plan follows the real codebase shape that already exists today, but it is t
 | Mariia | Layout system, chat and cart UX, clarification popup, monthly configuration flows, visual polish, demo quality |
 | Nacho | API contracts, backend wiring, SQLite schemas and migrations, auth and session flow, integration hardening, release branch stability |
 
-## VERSION0
+## VERSION0 ✅
 
 **Catalog scrape, basic shell, simple talking agent**
 
@@ -78,12 +91,12 @@ A user can open the website, browse a scraped catalog, see a clean layout with c
 - Keep local boot simple enough that the team can restart the demo quickly.
 
 ### Unite gate
-- Catalog endpoint returns usable normalized products from a real snapshot.
-- Website renders catalog, chat shell, and cart placeholder without broken layout.
-- Chat endpoint returns non-empty responses reliably.
-- The team can boot the project and show this version live without hidden setup.
+- ✅ Catalog endpoint returns usable normalized products from a real snapshot.
+- ✅ Website renders catalog, chat shell, and cart placeholder without broken layout.
+- ✅ Chat endpoint returns non-empty responses reliably.
+- ✅ The team can boot the project and show this version live without hidden setup.
 
-## VERSION1
+## VERSION1 ✅
 
 **Agent can add specific products to the cart**
 
@@ -122,12 +135,12 @@ The user can ask for a specific product such as a brand, size, or quantity, and 
 - Add only the server tests needed to keep demo-critical cart behavior from breaking.
 
 ### Unite gate
-- Queries such as `quiero leche entera 1L` and `agrega 2 yogures` result in concrete cart mutations.
-- The cart survives refresh and shows consistent totals.
-- Malformed cart items are rejected before UI rendering.
-- The add-specific-product flow is covered by automated tests.
+- ✅ Queries such as `quiero leche entera 1L` and `agrega 2 yogures` result in concrete cart mutations.
+- ✅ The cart survives refresh and shows consistent totals.
+- ✅ Malformed cart items are rejected before UI rendering.
+- ✅ The add-specific-product flow is covered by automated tests.
 
-## VERSION2
+## VERSION2 ✅ (code complete — pending live demo)
 
 **Complex queries, recipes, and stock-aware alternatives**
 
@@ -166,12 +179,12 @@ The user can ask for a recipe, a meal goal, or a broader shopping intent, and th
 - Cover the highest-risk recipe and substitution behaviors with a small targeted test set.
 
 ### Unite gate
-- Queries like `quiero hacer una torta` and `armame desayunos para la semana` add several relevant items.
-- Out-of-stock products never silently disappear: they are substituted or explicitly called out.
-- The reply explains the result in a way the user can audit.
-- Automated eval scenarios exist for recipes, multi-item goals, and alternatives.
+- ⬜ Queries like `quiero hacer una torta` and `armame desayunos para la semana` add several relevant items. *(blocked on catalog data)*
+- ✅ Out-of-stock products never silently disappear: they are substituted or explicitly called out.
+- ✅ The reply explains the result in a way the user can audit.
+- ✅ Automated eval scenarios exist for recipes, multi-item goals, and alternatives.
 
-## VERSION3
+## VERSION3 🔜
 
 **Clarification popup plus offers-aware cart reasoning**
 
@@ -210,12 +223,12 @@ When the assistant is unsure between several materially different options, it do
 - Keep logging and request tracing strong enough to debug unclear failures during demo prep.
 
 ### Unite gate
-- Ambiguous requests such as `gaseosa cola 1.5L` open a clarification popup instead of silently guessing.
-- User selection resumes the exact pending task and updates the cart correctly.
-- Offer-aware choices are visible and explainable in the UI.
-- The clarification and offers scenarios pass in the eval suite.
+- ⬜ Ambiguous requests such as `gaseosa cola 1.5L` open a clarification popup instead of silently guessing.
+- ⬜ User selection resumes the exact pending task and updates the cart correctly.
+- ⬜ Offer-aware choices are visible and explainable in the UI.
+- ⬜ The clarification and offers scenarios pass in the eval suite.
 
-## VERSION4
+## VERSION4 ⬜
 
 **Full automation with a monthly buys tab**
 
@@ -254,14 +267,14 @@ A user can configure a recurring monthly shopping profile and generate a monthly
 - Own the final integration path from recurring config to generated cart to saved order.
 
 ### Unite gate
-- User can save a recurring monthly profile and load it later.
-- Monthly generation builds a full proposed cart using config plus history plus current stock/offers.
-- The generated cart is reviewable and saveable as a normal order.
-- Automation scenarios are demoable without hidden manual setup.
+- ⬜ User can save a recurring monthly profile and load it later.
+- ⬜ Monthly generation builds a full proposed cart using config plus history plus current stock/offers.
+- ⬜ The generated cart is reviewable and saveable as a normal order.
+- ⬜ Automation scenarios are demoable without hidden manual setup.
 
 ## Cross-version unite checklist
-- At the end of every version, merge to one demo branch and run the smallest useful verification set.
-- From `version2` onward, run the LLM judge suite and track only the scenarios that protect the live demo.
+- ✅ At the end of every version, merge to one demo branch and run the smallest useful verification set.
+- ✅ From `version2` onward, run the LLM judge suite and track only the scenarios that protect the live demo.
 - Do not start the next version until the current version has one reproducible happy-path demo.
 - Keep the external stack stable: vanilla frontend, Python stdlib backend, SQLite, JSON snapshot/index, OpenAI-based agent layer.
 - Prefer additive changes over rewrites; the fastest path is to evolve the current code shape, not replace it.
