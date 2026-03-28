@@ -16,6 +16,7 @@ from backend.product_semantic_index import (
     search,
     rank_candidates,
     find_alternatives,
+    build_clarification_candidates,
     _normalize_text,
     _normalize_size,
     _brand_score,
@@ -228,3 +229,106 @@ class TestFindAlternatives:
         results = find_alternatives("leche", CATALOG)
         for p in results:
             assert p.get("available_quantity", 1) > 0
+
+
+# ─── rank_candidates() — offers-aware ────────────────────────────────────────
+
+class TestOffersRanking:
+    def test_high_discount_beats_low_discount(self):
+        """40% OFF product should rank above 5% OFF product when otherwise equal."""
+        cheap = _product("d1", "Leche Entera Genérica", "Genérica", "1L",
+                         price=100.0, discount_pct=5.0)
+        deal  = _product("d2", "Leche Entera Genérica", "Genérica", "1L",
+                         price=100.0, discount_pct=40.0)
+        results = rank_candidates([cheap, deal], "leche entera")
+        ids = [p["id"] for p in results]
+        assert ids.index("d2") < ids.index("d1"), (
+            f"40% OFF product (d2) should rank above 5% OFF (d1), got {ids}"
+        )
+
+    def test_discount_tiers_applied(self):
+        """Products at 40%, 20%, 10%, 5% should rank in that order when keywords equal."""
+        p40 = _product("t40", "Aceite Genérico", "Genérica", "1L", price=100.0, discount_pct=40.0)
+        p20 = _product("t20", "Aceite Genérico", "Genérica", "1L", price=100.0, discount_pct=20.0)
+        p10 = _product("t10", "Aceite Genérico", "Genérica", "1L", price=100.0, discount_pct=10.0)
+        p5  = _product("t5",  "Aceite Genérico", "Genérica", "1L", price=100.0, discount_pct=5.0)
+        results = rank_candidates([p5, p10, p20, p40], "aceite")
+        ids = [p["id"] for p in results]
+        assert ids == ["t40", "t20", "t10", "t5"], (
+            f"Expected descending discount order, got {ids}"
+        )
+
+    def test_brand_plus_discount_ranks_highest(self):
+        """Brand match (5.0) + 40% discount (4.0) = 9.0 should beat brand-only (5.0)."""
+        brand_only = _product("b1", "Leche Entera SanCor", "SanCor", "1L",
+                               price=100.0, discount_pct=0.0)
+        brand_deal = _product("b2", "Leche Entera SanCor", "SanCor", "1L",
+                               price=100.0, discount_pct=40.0)
+        results = rank_candidates([brand_only, brand_deal], "leche sancor")
+        ids = [p["id"] for p in results]
+        assert ids.index("b2") < ids.index("b1"), (
+            f"Brand + 40% OFF (b2) should rank above brand-only (b1), got {ids}"
+        )
+
+
+# ─── build_clarification_candidates() ────────────────────────────────────────
+
+class TestClarificationCandidates:
+    def test_brand_mismatch_triggers(self):
+        """Two candidates with different brands → non-empty option list returned."""
+        candidates = [
+            _product("c1", "Leche Entera La Serenísima", "La Serenísima", "1L", price=300.0),
+            _product("c2", "Leche Entera SanCor",         "SanCor",        "1L", price=280.0),
+        ]
+        opts = build_clarification_candidates(candidates)
+        assert len(opts) == 2, f"Expected 2 options for brand mismatch, got {len(opts)}"
+
+    def test_same_brand_size_price_no_clarification(self):
+        """Same brand, same size, same price → no clarification needed."""
+        candidates = [
+            _product("s1", "Leche Entera SanCor", "SanCor", "1L", price=280.0),
+            _product("s2", "Leche Entera SanCor", "SanCor", "1L", price=280.0),
+        ]
+        opts = build_clarification_candidates(candidates)
+        assert opts == [], f"Expected no clarification for identical candidates, got {opts}"
+
+    def test_size_delta_over_20pct_triggers(self):
+        """500ml vs 1000ml = 50% size delta → triggers clarification."""
+        candidates = [
+            _product("z1", "Leche Entera SanCor", "SanCor", "500ml",  price=180.0),
+            _product("z2", "Leche Entera SanCor", "SanCor", "1000ml", price=300.0),
+        ]
+        opts = build_clarification_candidates(candidates)
+        assert len(opts) >= 2, f"Expected clarification for large size delta, got {opts}"
+
+    def test_price_delta_over_15pct_triggers(self):
+        """$100 vs $120 = 20% price delta → triggers clarification."""
+        candidates = [
+            _product("pr1", "Aceite SanCor", "SanCor", "1L", price=100.0),
+            _product("pr2", "Aceite SanCor", "SanCor", "1L", price=120.0),
+        ]
+        opts = build_clarification_candidates(candidates)
+        assert len(opts) >= 2, f"Expected clarification for price delta >15%, got {opts}"
+
+    def test_single_candidate_no_clarification(self):
+        """Only one in-stock result → never ask for clarification."""
+        candidates = [
+            _product("one", "Leche Entera SanCor", "SanCor", "1L", price=280.0),
+        ]
+        opts = build_clarification_candidates(candidates)
+        assert opts == [], "Single candidate must not trigger clarification"
+
+    def test_option_dict_shape(self):
+        """Each returned option must have id, label, and product keys."""
+        candidates = [
+            _product("x1", "Leche Entera La Serenísima", "La Serenísima", "1L",  price=300.0),
+            _product("x2", "Leche Entera SanCor",         "SanCor",        "1L",  price=280.0),
+        ]
+        opts = build_clarification_candidates(candidates)
+        assert len(opts) == 2
+        for opt in opts:
+            assert "id" in opt, "Option must have 'id'"
+            assert "label" in opt, "Option must have 'label'"
+            assert "product" in opt, "Option must have 'product'"
+            assert "price" in opt["product"], "product must contain 'price'"
+            assert "brand" in opt["product"], "product must contain 'brand'"

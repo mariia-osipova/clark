@@ -61,7 +61,14 @@ def rank_candidates(candidates: list[dict], query: str) -> list[dict]:
         score = _keyword_score(tokens, p)
         score += _brand_score(tokens, p)          # +5 for exact brand match
         score += _size_score(query, p)            # +5 for exact package-size match
-        score += p.get("discount_pct", 0) * 0.01  # small boost for discounts
+        # Tiered discount bonus — makes strong offers visible in ranking
+        discount_pct = p.get("discount_pct", 0)
+        if discount_pct >= 40:
+            score += 4.0    # Strong offer — near brand-match weight
+        elif discount_pct >= 20:
+            score += 2.0    # Meaningful discount
+        elif discount_pct >= 10:
+            score += 1.0    # Mild discount — equal to one keyword match
         if score > 0:
             scored.append((score, p))
     scored.sort(key=lambda x: -x[0])
@@ -96,6 +103,42 @@ def find_alternatives(
             return pool[:top_k]
 
     return rank_candidates(candidates, query)[:top_k]
+
+
+def build_clarification_candidates(
+    candidates: list[dict],
+    max_options: int = 4,
+) -> list[dict]:
+    """
+    Given a pre-ranked candidate list, return a structured option list for the
+    clarification modal if the candidates are materially different, or [] if the
+    top result should be picked silently.
+
+    Ambiguity is triggered by:
+      - Brand mismatch (any 2 candidates have different brands)
+      - Size delta > 20% (same unit class)
+      - Price delta > 15%
+
+    Each returned option dict matches the frontend modal contract:
+        { "id": str, "label": str, "product": dict }
+    """
+    pool = [p for p in candidates if p.get("available_quantity", 1) != 0][:max_options]
+    if len(pool) < 2:
+        return []
+    if not _candidates_are_ambiguous(pool):
+        return []
+    return [
+        {
+            "id": p["id"],
+            "label": " ".join(filter(None, [
+                p.get("brand", ""),
+                p.get("name", ""),
+                p.get("package_size", ""),
+            ])),
+            "product": p,
+        }
+        for p in pool
+    ]
 
 
 def build_index(catalog: list[dict]) -> None:
@@ -314,4 +357,29 @@ def _size_score(query: str, product: dict) -> float:
     if query_size and product_size and query_size == product_size:
         return 5.0
     return 0.0
+
+
+def _candidates_are_ambiguous(candidates: list[dict]) -> bool:
+    """
+    Return True if the candidate list is ambiguous enough to require user clarification.
+    Triggers on: brand mismatch, size delta > 20% (same unit class), price delta > 15%.
+    """
+    # Brand mismatch — any two candidates with different brands
+    brands = {_normalize_text(p.get("brand", "")) for p in candidates if p.get("brand")}
+    if len(brands) > 1:
+        return True
+
+    # Size delta > 20% within the same unit class
+    sizes = [_normalize_size(p.get("package_size", "")) for p in candidates]
+    for unit_class in ("liquid", "solid"):
+        vals = [v for s in sizes if s is not None for v, u in [s] if u == unit_class]
+        if len(vals) >= 2 and (max(vals) - min(vals)) / max(vals) > 0.20:
+            return True
+
+    # Price delta > 15%
+    prices = [p.get("price", 0) for p in candidates if (p.get("price") or 0) > 0]
+    if len(prices) >= 2 and (max(prices) - min(prices)) / max(prices) > 0.15:
+        return True
+
+    return False
 

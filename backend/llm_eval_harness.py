@@ -98,6 +98,28 @@ SCENARIOS: list[Scenario] = [
         expect_clarification=True,
         tags=["clarification"],
     ),
+
+    # V3 scenarios — clarification and offers
+    Scenario(
+        id="ambiguous_brand",
+        description="'yogur natural' has multiple brand candidates → clarification popup",
+        user_message="quiero yogur natural",
+        expect_clarification=True,
+        tags=["clarification"],
+    ),
+    Scenario(
+        id="ambiguous_size",
+        description="'jugo de naranja' without specifying size → multiple sizes trigger clarification",
+        user_message="quiero jugo de naranja",
+        expect_clarification=True,
+        tags=["clarification"],
+    ),
+    Scenario(
+        id="offers_ranking",
+        description="Two similar products — discounted one should be chosen or mentioned",
+        user_message="quiero aceite de girasol",
+        tags=["offers", "llm_judge"],
+    ),
 ]
 
 
