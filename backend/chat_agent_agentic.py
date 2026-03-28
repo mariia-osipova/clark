@@ -358,11 +358,13 @@ def handle_chat(
     if context:
         init_messages.append(SystemMessage(content=context))
 
+    clarification_resolved_product = None
     if clarification_response:
         chosen_id = clarification_response.get("chosen_option_id", "")
         pending_id = clarification_response.get("pending_request_id", "")
         product = next((p for p in _catalog if p.get("id") == chosen_id), None)
         if product:
+            clarification_resolved_product = product
             details = ", ".join(filter(None, [
                 f"nombre={product['name']}",
                 f"marca={product.get('brand', '')}",
@@ -388,7 +390,13 @@ def handle_chat(
         elif msg["role"] == "assistant":
             init_messages.append(AIMessage(content=msg["content"]))
 
-    init_messages.append(HumanMessage(content=message))
+    # When the user resolved a clarification by picking a known product, the
+    # frontend sends the option label as the message text.  That long product
+    # name would be treated as a new search query, re-triggering the
+    # clarification loop.  Replace it with a neutral confirmation so the agent
+    # focuses on the system-level set_cart instruction above.
+    effective_message = "Confirmado." if clarification_resolved_product else message
+    init_messages.append(HumanMessage(content=effective_message))
 
     final_state = app.invoke(
         {

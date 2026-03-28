@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-key")
 
-from langchain_core.messages import AIMessage as LCAIMessage
+from langchain_core.messages import AIMessage as LCAIMessage, HumanMessage as LCHumanMessage
 
 from backend.chat_agent_agentic import (
     _build_system_prompt,
@@ -305,6 +305,34 @@ class TestHandleChat:
         assert injected is not None, "Expected product details injected into messages"
         assert "nombre=Leche entera La Serenísima" in injected
         assert "set_cart" in injected
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_clarification_response_uses_neutral_message_not_label(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        """When clarification resolves to a known product, the HumanMessage sent
+        to the agent must be a neutral confirmation ('Confirmado.'), NOT the
+        product label.  Sending the label causes the agent to re-search and
+        re-trigger the clarification loop."""
+        mock_load_catalog.return_value = sample_catalog
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="Listo.")
+        mock_build_graph.return_value = mock_app
+
+        # Frontend sends the option label as the message text
+        handle_chat(
+            "Leche entera La Serenísima 1L",   # product label from the modal
+            [],
+            [],
+            clarification_response={"pending_request_id": "pending-1", "chosen_option_id": "p1"},
+        )
+
+        state = mock_app.invoke.call_args.args[0]
+        human_messages = [m for m in state["messages"] if isinstance(m, LCHumanMessage)]
+        last_human = human_messages[-1].content
+        assert last_human == "Confirmado.", (
+            f"Expected neutral 'Confirmado.' but got {last_human!r}. "
+            "Sending the product label causes a re-search loop."
+        )
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")

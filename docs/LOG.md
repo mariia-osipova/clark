@@ -2,6 +2,14 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Jeremias — Fix: clarification selection no longer re-triggers search loop
+
+**Type:** bugfix
+
+Root cause: the frontend sends the selected option's label as the `message` field when resolving a clarification (e.g. "Carrefour Galletas crackers … 200 g"). The agent received this long product name as the new HumanMessage and treated it as a fresh search query, re-calling `search_products`, which re-triggered `build_clarification_candidates` and produced a second clarification popup — or reported the product as unavailable. Fix: in `handle_chat`, when `clarification_response` resolves to a known catalog product, the HumanMessage is replaced with the neutral string "Confirmado." so the agent focuses on the system-level injection ("Llamá a set_cart directamente con este product_id"). Added regression test `test_clarification_response_uses_neutral_message_not_label`. 48 agent tests passing.
+
+---
+
 ## 2026-03-28 — Jeremias — Permanent rule: no ad hoc agent behavior fixes
 
 **Type:** decision
