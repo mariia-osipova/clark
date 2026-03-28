@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from backend.app import RequestHandler
+from backend.db import init_db
 
 
 def load_env(path: str = ".env") -> None:
@@ -39,6 +40,7 @@ def load_env(path: str = ".env") -> None:
 
 def main() -> None:
     load_env()
+    init_db()
 
     port = int(os.environ.get("PORT", 8000))
     host = os.environ.get("HOST", "0.0.0.0")
