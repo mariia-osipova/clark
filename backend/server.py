@@ -52,14 +52,13 @@ def main() -> None:
     if not os.environ.get("OPENAI_API_KEY"):
         print("WARNING: OPENAI_API_KEY is not set. Chat endpoint will not work.")
 
-    # Pre-warm the sentence-transformer model so the first chat request isn't slow
+    # Pre-warm: load the semantic index into memory so first search is fast
     try:
-        from backend.product_semantic_index import _load_model
-        print("Loading embedding model...", end=" ", flush=True)
-        _load_model()
-        print("ready.")
+        from backend.product_semantic_index import _load_index
+        entries = _load_index()
+        print(f"Semantic index loaded ({len(entries)} products).")
     except Exception as e:
-        print(f"WARNING: could not pre-load embedding model: {e}")
+        print(f"WARNING: could not pre-load semantic index: {e}")
 
     server = ThreadingHTTPServer((host, port), RequestHandler)
     print(f"supershop server running at http://{host}:{port}")

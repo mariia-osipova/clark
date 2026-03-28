@@ -24,9 +24,9 @@ ROOT = Path(__file__).resolve().parent.parent
 INDEX_PATH = ROOT / "data" / "product_semantic_index.json"
 CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
 
-# Module-level cache: avoids reloading model and index on every call
-_MODEL_CACHE: dict = {}   # key "model" → SentenceTransformer instance
+# Module-level cache: avoids reloading index on every call
 _INDEX_CACHE: dict = {}   # key "entries" → list[{id, embedding}], "path_mtime" → float
+_QUERY_EMBED_CACHE: dict[str, list[float]] = {}  # query string → embedding vector
 
 # Minimum cosine similarity for a semantic candidate to be considered relevant.
 # Filters out cross-category noise (e.g. "azúcar" returning cleaners).
@@ -204,21 +204,11 @@ def resolve_product(
     results = search(query, catalog, constraints=constraints)
 
     if not results:
-        # Try to find the OOS product's category for better alternative targeting
-        tokens = _tokenize(query)
-        oos_matches = [
-            p for p in catalog
-            if p.get("available_quantity", 1) == 0 and _keyword_score(tokens, p) > 0
-        ]
-        category = oos_matches[0].get("category") if oos_matches else None
-        alternatives = find_alternatives(query, catalog, category=category, constraints=constraints)
-        if not alternatives:
-            return {"status": "not_found", "quantity": quantity}
-        return {
-            "status": "needs_suggestion",
-            "options": alternatives[:3],
-            "quantity": quantity,
-        }
+        # Retry with a lower floor to catch short/ambiguous queries like "pan"
+        results = search(query, catalog, constraints=constraints, _floor_override=0.30)
+
+    if not results:
+        return {"status": "not_found", "quantity": quantity}
 
     # Always auto-pick the top result. The name-anchored pipeline + hard
     # constraints already ensure results are precise. Clarification is reserved
@@ -231,38 +221,87 @@ def resolve_product(
     }
 
 
-def search(query: str, catalog: list[dict], top_k: int = 4, constraints: dict | None = None) -> list[dict]:
+def search(query: str, catalog: list[dict], top_k: int = 4, constraints: dict | None = None, _floor_override: float | None = None) -> list[dict]:
     """
-    Return up to top_k products matching the query.
+    Return up to top_k in-stock products most relevant to *query*.
 
     Pipeline:
-      1. Name-field matching on the content query (constraints stripped)
-      2. Semantic reranking of name-matched candidates
-      3. Semantic fallback with strict similarity floor (0.65)
+      1. Embed query with OpenAI text-embedding-3-small (cached).
+      2. Batch cosine similarity against the pre-built index using numpy.
+      3. Filter scores below _SIMILARITY_FLOOR.
+      4. Apply hard constraints (brand / size / qualifiers) as a post-filter.
+      5. Return top_k results ordered by descending similarity.
 
-    *constraints* is an optional dict from extract_constraints() with keys like
-    brand, size, qualifiers.  When provided, hard constraint filters are applied.
+    Falls back to keyword search if the index is missing or the embed call fails.
+    Out-of-stock products are always excluded.
     """
-    # Build content query by stripping constraints
-    content_query = _strip_constraints(query, constraints) if constraints else query
+    import numpy as np
 
-    # Stage 1: name-field matching
-    candidates = _name_candidates(content_query, catalog)
+    index = _load_index()
+    if not index:
+        return _keyword_fallback(query, catalog, top_k, constraints)
+
+    query_emb = _embed_query(query)
+    if not query_emb:
+        return _keyword_fallback(query, catalog, top_k, constraints)
+
+    # Build id → product map (in-stock only)
+    id_to_product = {
+        p["id"]: p for p in catalog if p.get("available_quantity", 1) != 0
+    }
+
+    # Extract ids and embedding matrix aligned with the index
+    ids    = [e["id"] for e in index]
+    matrix = np.array([e["embedding"] for e in index], dtype=np.float32)
+    qvec   = np.array(query_emb, dtype=np.float32)
+
+    # Normalised cosine similarity via matrix-vector multiply
+    matrix /= (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9)
+    qvec   /= (np.linalg.norm(qvec) + 1e-9)
+    scores  = (matrix @ qvec).tolist()   # shape: (n_products,)
+
+    # Collect candidates above floor (in-stock only)
+    floor = _floor_override if _floor_override is not None else _SIMILARITY_FLOOR
+    candidates = []
+    for pid, score in zip(ids, scores):
+        if score < floor:
+            continue
+        product = id_to_product.get(pid)
+        if product is None:
+            continue
+        candidates.append((score, product))
+
+    candidates.sort(key=lambda x: -x[0])
+    ranked = [p for _, p in candidates]
+
+    # Apply hard constraints as post-filter; fall back to unfiltered if all removed
     if constraints:
-        candidates = _apply_hard_constraints(candidates, constraints)
+        filtered = _apply_hard_constraints(ranked, constraints)
+        if filtered:
+            ranked = filtered
 
-    # Stage 2: semantic rerank
-    if candidates:
-        candidates = _semantic_rerank(query, candidates)
-        return candidates[:top_k]
+    return ranked[:top_k]
 
-    # Stage 3: semantic fallback with strict floor
-    candidates = _semantic_candidates(query, catalog, top_k * 3, floor=0.65)
+
+def _keyword_fallback(
+    query: str, catalog: list[dict], top_k: int, constraints: dict | None
+) -> list[dict]:
+    """Keyword-only search used when the semantic index or API is unavailable."""
+    tokens = _tokenize(_normalize_text(query))
+    scored = []
+    for p in catalog:
+        if p.get("available_quantity", 1) == 0:
+            continue
+        score = _keyword_score(tokens, p)
+        if score > 0:
+            scored.append((score, p))
+    scored.sort(key=lambda x: -x[0])
+    ranked = [p for _, p in scored]
     if constraints:
-        candidates = _apply_hard_constraints(candidates, constraints)
-    # Still apply rank_candidates for keyword/brand/size scoring
-    ranked = rank_candidates(candidates, query)
-    return (ranked if ranked else candidates)[:top_k]
+        filtered = _apply_hard_constraints(ranked, constraints)
+        if filtered:
+            ranked = filtered
+    return ranked[:top_k]
 
 
 def rank_candidates(candidates: list[dict], query: str) -> list[dict]:
@@ -327,9 +366,9 @@ def find_alternatives(
             "qualifiers": constraints.get("qualifiers", []),
         }
 
-    candidates = _semantic_candidates(query, pool, top_k * 3)
+    candidates = search(query, pool, top_k * 3)
     if not candidates:
-        candidates = _name_candidates(query, pool)
+        candidates = _keyword_fallback(query, pool, top_k * 3, None)
         if not candidates:
             return []
 
@@ -478,50 +517,42 @@ def generate_monthly_basket_candidates(
     return {"candidates": candidates, "budget_overflow": running_cost > budget}
 
 
-def build_index(catalog: list[dict]) -> None:
+def build_index(catalog: list[dict], out_path: "Path | str | None" = None) -> None:
     """
-    Build and persist a semantic index from the catalog.
-    Generates one embedding per product using a local sentence-transformers model
-    (no API key required) and writes data/product_semantic_index.json.
+    Build and persist a semantic index using OpenAI text-embedding-3-small.
 
-    Model: paraphrase-multilingual-MiniLM-L12-v2
-      - Multilingual — works well with Spanish product names
-      - 384-dimensional embeddings
-      - Downloaded automatically from HuggingFace on first run (~450 MB)
+    Generates one 1536-dim embedding per product and writes a JSON index.
+    Requires OPENAI_API_KEY in environment.
 
-    search() loads this index and re-ranks by cosine similarity.
+    Args:
+        catalog:  List of product dicts (same schema as catalog_snapshot.json).
+        out_path: Destination for the index file.
+                  Defaults to data/product_semantic_index.json.
     """
-    try:
-        from sentence_transformers import SentenceTransformer
-    except ImportError:
-        raise RuntimeError(
-            "sentence-transformers not installed. Run: pip install sentence-transformers"
-        )
+    import openai
 
-    model_name = "paraphrase-multilingual-MiniLM-L12-v2"
-    print(f"  Loading model {model_name} (downloads on first run)…")
-    model = SentenceTransformer(model_name)
+    dest = Path(out_path) if out_path is not None else INDEX_PATH
+    client = openai.OpenAI()
 
     texts = [_product_text(p) for p in catalog]
-    ids = [p["id"] for p in catalog]
+    ids   = [p["id"] for p in catalog]
 
-    print(f"  Embedding {len(texts)} products…")
-    # encode() returns a numpy array; convert to plain Python lists for JSON
-    vectors = model.encode(texts, batch_size=64, show_progress_bar=True, convert_to_numpy=True)
+    print(f"  Embedding {len(texts)} products with text-embedding-3-small…")
+    all_embeddings: list[list[float]] = []
+    batch_size = 2048
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i : i + batch_size]
+        resp = client.embeddings.create(model="text-embedding-3-small", input=batch)
+        all_embeddings.extend([e.embedding for e in resp.data])
+        print(f"  {min(i + batch_size, len(texts))}/{len(texts)} embedded…")
 
-    entries = [
-        {"id": pid, "embedding": vec.tolist()}
-        for pid, vec in zip(ids, vectors)
-    ]
+    entries = [{"id": pid, "embedding": emb} for pid, emb in zip(ids, all_embeddings)]
+    index   = {"version": "openai-v1", "model": "text-embedding-3-small", "entries": entries}
 
-    index = {
-        "version": "current",
-        "model": model_name,
-        "entries": entries,
-    }
-    with open(INDEX_PATH, "w") as f:
-        json.dump(index, f, indent=2)
-    print(f"  Index written: {len(entries)} embeddings → {INDEX_PATH}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest, "w") as f:
+        json.dump(index, f)
+    print(f"  Index written: {len(entries)} embeddings → {dest}")
 
 
 # ─── Internal ────────────────────────────────────────────────────────────────
@@ -537,7 +568,7 @@ def _keyword_score(tokens: list[str], product: dict) -> float:
         product.get("category", ""),
         product.get("package_size", ""),
     ]))
-    return sum(1 for t in tokens if _normalize_text(t) in searchable)
+    return sum(1 for t in tokens if re.search(r'\b' + re.escape(_normalize_text(t)) + r'\b', searchable))
 
 
 def _product_text(product: dict) -> str:
@@ -600,14 +631,6 @@ def _normalize_size(text: str) -> tuple[float, str] | None:
     return None
 
 
-def _load_model():
-    """Lazy-load the sentence-transformer model, cached at module level."""
-    if "model" not in _MODEL_CACHE:
-        from sentence_transformers import SentenceTransformer
-        _MODEL_CACHE["model"] = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
-    return _MODEL_CACHE["model"]
-
-
 def _cosine(a: list[float], b: list[float]) -> float:
     """Cosine similarity between two vectors."""
     dot = sum(x * y for x, y in zip(a, b))
@@ -632,6 +655,25 @@ def _load_index() -> list[dict]:
         _INDEX_CACHE["path_mtime"] = mtime
 
     return _INDEX_CACHE["entries"]
+
+
+def _embed_query(query: str) -> list[float]:
+    """
+    Embed *query* with OpenAI text-embedding-3-small.
+    Results are cached at module level; the same string is never sent twice.
+    Returns [] on any failure (missing key, network error) so callers can fall back.
+    """
+    if query in _QUERY_EMBED_CACHE:
+        return _QUERY_EMBED_CACHE[query]
+    try:
+        import openai
+        client = openai.OpenAI()
+        resp = client.embeddings.create(model="text-embedding-3-small", input=[query])
+        vec = resp.data[0].embedding
+        _QUERY_EMBED_CACHE[query] = vec
+        return vec
+    except Exception:
+        return []
 
 
 def _strip_constraints(query: str, constraints: dict) -> str:
@@ -669,116 +711,6 @@ def _strip_constraints(query: str, constraints: dict) -> str:
 
     # Strip extra whitespace
     return " ".join(result.split()).strip()
-
-
-def _name_candidates(query: str, catalog: list[dict]) -> list[dict]:
-    """
-    Return products whose **name** field contains all query tokens.
-    Handles negation: a token preceded by "sin" in the product name does not count.
-    Excludes out-of-stock products.
-    Uses accent-insensitive matching via _normalize_text.
-    """
-    query_tokens = _tokenize(_normalize_text(query))
-    if not query_tokens:
-        return []
-
-    results = []
-    for p in catalog:
-        if p.get("available_quantity", 1) == 0:
-            continue
-
-        name_raw = p.get("name", "")
-        name_norm = _normalize_text(name_raw)
-        name_tokens = _tokenize(name_norm)
-
-        all_match = True
-        for qt in query_tokens:
-            # Check if this token appears in the name
-            found = False
-            for i, nt in enumerate(name_tokens):
-                if qt in nt:
-                    # Check negation: if preceded by "sin", this doesn't count
-                    if i > 0 and name_tokens[i - 1] == "sin":
-                        continue
-                    found = True
-                    break
-            if not found:
-                all_match = False
-                break
-
-        if all_match:
-            results.append(p)
-
-    return results
-
-
-def _semantic_rerank(query: str, candidates: list[dict]) -> list[dict]:
-    """
-    Re-rank candidates by cosine similarity to the query embedding.
-    Candidates without an embedding in the index are kept but sorted to the end.
-    Returns candidates sorted by descending similarity.
-    """
-    try:
-        model = _load_model()
-    except (ImportError, Exception):
-        return candidates
-
-    entries = _load_index()
-    if not entries:
-        return candidates
-
-    # Build embedding lookup by product id
-    id_to_embedding = {e["id"]: e["embedding"] for e in entries}
-
-    query_vec = model.encode([query], convert_to_numpy=True)[0].tolist()
-
-    scored = []
-    unscored = []
-    for p in candidates:
-        emb = id_to_embedding.get(p["id"])
-        if emb is not None:
-            sim = _cosine(query_vec, emb)
-            scored.append((sim, p))
-        else:
-            unscored.append(p)
-
-    scored.sort(key=lambda x: -x[0])
-    return [p for _, p in scored] + unscored
-
-
-def _semantic_candidates(query: str, catalog: list[dict], top_k: int, floor: float = _SIMILARITY_FLOOR) -> list[dict]:
-    """
-    Encode query, compute cosine similarity against the persisted index,
-    and return the top_k in-stock products ordered by similarity.
-    Returns [] if sentence-transformers is not installed or index is missing.
-    """
-    try:
-        model = _load_model()
-    except (ImportError, Exception):
-        return []
-
-    entries = _load_index()
-    if not entries:
-        return []
-
-    # Build a fast id → product lookup (only in-stock items)
-    id_to_product = {
-        p["id"]: p for p in catalog if p.get("available_quantity", 1) != 0
-    }
-
-    query_vec = model.encode([query], convert_to_numpy=True)[0].tolist()
-
-    scored = []
-    for entry in entries:
-        pid = entry["id"]
-        if pid not in id_to_product:
-            continue  # product removed from catalog or OOS
-        sim = _cosine(query_vec, entry["embedding"])
-        scored.append((sim, id_to_product[pid]))
-
-    scored.sort(key=lambda x: -x[0])
-    scored = [(s, p) for s, p in scored if s >= floor]
-    return [p for _, p in scored[:top_k]]
 
 
 def _brand_score(query_tokens: list[str], product: dict) -> float:

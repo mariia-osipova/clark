@@ -25,7 +25,6 @@ from backend.product_semantic_index import (
     _normalize_size,
     _brand_score,
     _size_score,
-    _name_candidates,
     _strip_constraints,
 )
 
@@ -213,18 +212,21 @@ class TestSearchSemanticFallback:
         With a live semantic index, a specific product query must return the
         matching product. Broad conceptual queries may return 0 results on a
         5-product catalog due to the similarity floor — that is intentional.
-        Skipped if sentence-transformers is not installed.
+        Skipped if OPENAI_API_KEY is not set or is a test key.
         """
-        st = pytest.importorskip("sentence_transformers")
+        import os
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key or api_key.startswith("sk-test-"):
+            pytest.skip("OPENAI_API_KEY not set or is a test key — skipping semantic search test")
+
         import backend.product_semantic_index as mod
         from backend.product_semantic_index import build_index
 
         index_file = tmp_path / "index.json"
         monkeypatch.setattr(mod, "INDEX_PATH", index_file)
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
-        monkeypatch.setattr(mod, "_MODEL_CACHE", {})
 
-        build_index(CATALOG)
+        build_index(CATALOG, out_path=index_file)
         assert index_file.exists(), "build_index() must write the index file"
         # A direct product name query must find the product via semantic search
         results = search("yogur entero danone", CATALOG)
@@ -469,7 +471,11 @@ class TestResolveProduct:
 
     def test_oos_item_resolves_to_similar_via_semantic(self, tmp_path, monkeypatch):
         """OOS exact match + semantic engine → resolves to best in-stock similar product."""
-        st = pytest.importorskip("sentence_transformers")
+        import os
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key or api_key.startswith("sk-test-"):
+            pytest.skip("OPENAI_API_KEY not set or is a test key — skipping semantic test")
+
         import backend.product_semantic_index as mod
 
         isolated = [
@@ -485,7 +491,7 @@ class TestResolveProduct:
         monkeypatch.setattr(mod, "INDEX_PATH", index_file)
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
         monkeypatch.setattr(mod, "CATALOG_PATH", tmp_path / "catalog.json")
-        mod.build_index(isolated)
+        mod.build_index(isolated, out_path=index_file)
 
         result = resolve_product("mascarpone", 1, isolated)
         # With name-anchored search, "mascarpone" doesn't match "queso crema" in
@@ -663,87 +669,7 @@ class TestNameAnchoredSearch:
         monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent_name_test.json")
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
 
-    # ── Name-field precision tests (keyword-only) ────────────────────────────
-
-    def test_queso_mascarpone_only_returns_mascarpone(self, monkeypatch):
-        """'queso mascarpone' must only match 'Queso mascarpone Carrefour 250g',
-        not products that merely contain 'queso' in their name."""
-        self._no_index(monkeypatch)
-        catalog = [
-            _product("qm1", "Queso mascarpone Carrefour 250g", "Carrefour", "250g", category="Quesos"),
-            _product("qm2", "Queso cremoso Puyehue", "Puyehue", "1kg", category="Quesos"),
-            _product("qm3", "Queso crema Casancrem", "Casancrem", "290g", category="Quesos"),
-            _product("qm4", "Palitos de maíz sabor queso", "Lays", "100g", category="Snacks"),
-            _product("qm5", "Ravioles cuatro quesos", "La Salteña", "500g", category="Pastas"),
-        ]
-        results = _name_candidates("queso mascarpone", catalog)
-        ids = [p["id"] for p in results]
-        assert "qm1" in ids, f"Mascarpone product must appear, got {ids}"
-        assert "qm2" not in ids, f"Queso cremoso must NOT match 'queso mascarpone', got {ids}"
-        assert "qm3" not in ids, f"Queso crema must NOT match 'queso mascarpone', got {ids}"
-        assert "qm4" not in ids, f"Palitos sabor queso must NOT match, got {ids}"
-        assert "qm5" not in ids, f"Ravioles cuatro quesos must NOT match, got {ids}"
-
-    def test_azucar_excludes_sin_azucar(self, monkeypatch):
-        """'azucar' must match actual sugar products but NOT 'sin azucar' products.
-        'azucarados' should match because it contains the token 'azucar'."""
-        self._no_index(monkeypatch)
-        catalog = [
-            _product("az1", "Azúcar Ledesma 1kg", "Ledesma", "1kg", category="Almacén"),
-            _product("az2", "Azúcar Hileret light 500g", "Hileret", "500g", category="Almacén"),
-            _product("az3", "Gaseosa 7Up sin azúcar 2.25L", "7Up", "2.25L", category="Bebidas"),
-            _product("az4", "Yogur sin azúcar Tregar 280g", "Tregar", "280g", category="Lácteos"),
-            _product("az5", "Copos azucarados Skarchitos 500g", "Skarchitos", "500g", category="Cereales"),
-        ]
-        results = _name_candidates("azucar", catalog)
-        ids = [p["id"] for p in results]
-        assert "az1" in ids, f"Azúcar Ledesma must match, got {ids}"
-        assert "az2" in ids, f"Azúcar Hileret must match, got {ids}"
-        assert "az3" not in ids, f"'sin azúcar' product must NOT match, got {ids}"
-        assert "az4" not in ids, f"'sin azúcar' product must NOT match, got {ids}"
-        # azucarados contains the token — should match
-        assert "az5" in ids, f"'azucarados' should match since it contains the token, got {ids}"
-
-    def test_single_token_leche_returns_only_leche_products(self, monkeypatch):
-        """'leche' must match any product with 'leche' in its name, including
-        'Dulce de leche'. Yogur must not match."""
-        self._no_index(monkeypatch)
-        catalog = [
-            _product("le1", "Leche entera La Serenísima 1L", "La Serenísima", "1L", category="Lácteos"),
-            _product("le2", "Leche descremada SanCor 1L", "SanCor", "1L", category="Lácteos"),
-            _product("le3", "Dulce de leche Chimbote 500g", "Chimbote", "500g", category="Dulces"),
-            _product("le4", "Yogur entero Danone 200g", "Danone", "200g", category="Lácteos"),
-        ]
-        results = _name_candidates("leche", catalog)
-        ids = [p["id"] for p in results]
-        assert "le1" in ids, f"'Leche entera' must match, got {ids}"
-        assert "le2" in ids, f"'Leche descremada' must match, got {ids}"
-        assert "le3" in ids, f"'Dulce de leche' must match (has 'leche' in name), got {ids}"
-        assert "le4" not in ids, f"'Yogur' must NOT match 'leche' query, got {ids}"
-
-    def test_name_matching_is_accent_insensitive(self, monkeypatch):
-        """'azucar' (no accent) must match 'Azúcar Ledesma 1kg' (with accent)."""
-        self._no_index(monkeypatch)
-        catalog = [
-            _product("ai1", "Azúcar Ledesma 1kg", "Ledesma", "1kg", category="Almacén"),
-        ]
-        results = _name_candidates("azucar", catalog)
-        ids = [p["id"] for p in results]
-        assert "ai1" in ids, f"Accent-insensitive match failed, got {ids}"
-
-    def test_oos_excluded_from_name_candidates(self, monkeypatch):
-        """Product with available_quantity=0 must not appear even if name matches."""
-        self._no_index(monkeypatch)
-        catalog = [
-            _product("oos1", "Leche entera SanCor 1L", "SanCor", "1L",
-                     available_quantity=0, category="Lácteos"),
-            _product("oos2", "Leche entera La Serenísima 1L", "La Serenísima", "1L",
-                     available_quantity=5, category="Lácteos"),
-        ]
-        results = _name_candidates("leche", catalog)
-        ids = [p["id"] for p in results]
-        assert "oos1" not in ids, f"OOS product must be excluded, got {ids}"
-        assert "oos2" in ids, f"In-stock product must appear, got {ids}"
+    # ── top_k test ───────────────────────────────────────────────────────────
 
     def test_top_k_default_is_4(self, monkeypatch):
         """search() with default top_k on a catalog with 10 matching products
@@ -763,14 +689,17 @@ class TestNameAnchoredSearch:
     def test_semantic_rerank_sorts_by_relevance(self, tmp_path, monkeypatch):
         """With a live semantic index, 'azucar comun' should rank the 'comun'
         product first because it is semantically closest."""
-        st = pytest.importorskip("sentence_transformers")
+        import os
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key or api_key.startswith("sk-test-"):
+            pytest.skip("OPENAI_API_KEY not set or is a test key — skipping semantic test")
+
         import backend.product_semantic_index as mod
         from backend.product_semantic_index import build_index
 
         index_file = tmp_path / "index.json"
         monkeypatch.setattr(mod, "INDEX_PATH", index_file)
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
-        monkeypatch.setattr(mod, "_MODEL_CACHE", {})
 
         catalog = [
             _product("sr1", "Azúcar común Bulnez 1kg", "Bulnez", "1kg", category="Almacén"),
@@ -778,7 +707,7 @@ class TestNameAnchoredSearch:
             _product("sr3", "Azúcar mascabo Ledesma 800g", "Ledesma", "800g", category="Almacén"),
         ]
 
-        build_index(catalog)
+        build_index(catalog, out_path=index_file)
         assert index_file.exists(), "build_index() must write the index file"
 
         results = search("azúcar común", catalog)
@@ -794,14 +723,17 @@ class TestNameAnchoredSearch:
         should engage. It may return results (if embeddings are close enough)
         or an empty list — either is acceptable. It must not crash or return
         garbage (products with zero semantic relevance)."""
-        st = pytest.importorskip("sentence_transformers")
+        import os
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key or api_key.startswith("sk-test-"):
+            pytest.skip("OPENAI_API_KEY not set or is a test key — skipping semantic test")
+
         import backend.product_semantic_index as mod
         from backend.product_semantic_index import build_index
 
         index_file = tmp_path / "index.json"
         monkeypatch.setattr(mod, "INDEX_PATH", index_file)
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
-        monkeypatch.setattr(mod, "_MODEL_CACHE", {})
 
         catalog = [
             _product("sf1", "Crackers de agua", "Bagley", "200g", category="Galletitas"),
@@ -809,7 +741,7 @@ class TestNameAnchoredSearch:
             _product("sf3", "Aceite girasol Natura 900ml", "Natura", "900ml", category="Aceites"),
         ]
 
-        build_index(catalog)
+        build_index(catalog, out_path=index_file)
         assert index_file.exists(), "build_index() must write the index file"
 
         # "galletitas" doesn't appear in any product NAME, so name matching
@@ -931,7 +863,11 @@ class TestHardConstraintFiltering:
 class TestNoiseRegression:
     def test_azucar_no_unrelated_products(self, tmp_path, monkeypatch):
         """'azúcar' must not surface cleaners, vegetables, or other noise."""
-        st = pytest.importorskip("sentence_transformers")
+        import os
+        api_key = os.environ.get("OPENAI_API_KEY", "")
+        if not api_key or api_key.startswith("sk-test-"):
+            pytest.skip("OPENAI_API_KEY not set or is a test key — skipping semantic test")
+
         import backend.product_semantic_index as mod
 
         catalog = [
@@ -951,7 +887,7 @@ class TestNoiseRegression:
         monkeypatch.setattr(mod, "INDEX_PATH", index_file)
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
         monkeypatch.setattr(mod, "CATALOG_PATH", tmp_path / "catalog.json")
-        mod.build_index(catalog)
+        mod.build_index(catalog, out_path=index_file)
 
         results = search("azúcar", catalog)
         ids = [p["id"] for p in results]

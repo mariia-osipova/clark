@@ -62,7 +62,7 @@ def _get_catalog() -> list[dict]:
     try:
         mtime = CATALOG_PATH.stat().st_mtime
     except FileNotFoundError:
-        return []
+        mtime = 0.0
     if _catalog_cache is None or _catalog_cache[1] != mtime:
         _catalog_cache = (_load_catalog(), mtime)
     return _catalog_cache[0]
@@ -392,6 +392,11 @@ _CLASSIFY_SYSTEM = (
     "individuales con queries específicos orientados al catálogo. NUNCA uses el nombre del plato "
     "como query.\n"
     "\n"
+    "REGLA NECESIDADES: Si el mensaje expresa una necesidad, uso o propósito ('algo para X', "
+    "'necesito para Y', 'quiero para Z'), clasificalo como shopping y traducilo al producto "
+    "concreto más probable. Ejemplos: 'algo para tomar mate' → yerba mate, "
+    "'para el desayuno' → clasificar los ítems mencionados o preguntar qué quieren.\n"
+    "\n"
     "Ejemplos:\n"
     '{"turn_kind":"shopping","planned_items":[{"query":"leche entera","quantity":2},{"query":"yogur","quantity":1}]}\n'
     "\n"
@@ -416,6 +421,12 @@ _CLASSIFY_SYSTEM = (
     "\n"
     '"eso no es helado" / "no, busco otra cosa" → '
     '{"turn_kind":"suggestion_rejection","planned_items":[]}\n'
+    "\n"
+    'Necesidad descriptiva → "algo para tomar mate" → '
+    '{"turn_kind":"shopping","planned_items":[{"query":"yerba mate","quantity":1}]}\n'
+    "\n"
+    'Necesidad descriptiva → "para limpiar el baño" → '
+    '{"turn_kind":"shopping","planned_items":[{"query":"limpiador para baño","quantity":1}]}\n'
     "\n"
     "SOLO JSON, sin markdown ni texto adicional."
 )
