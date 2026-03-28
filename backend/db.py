@@ -227,6 +227,24 @@ def place_order(session_id: str, order_id: str, cart: list, total: float) -> Non
         conn.close()
 
 
+def get_last_order() -> dict | None:
+    """Return the most recently placed order, or None if no orders exist."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id, cart_json, total, created_at FROM orders ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    try:
+        cart = json.loads(row["cart_json"])
+    except Exception:
+        cart = []
+    return {"id": row["id"], "cart": cart, "total": row["total"], "created_at": row["created_at"]}
+
+
 # ─── Pending clarification helpers ────────────────────────────────────────────
 
 def save_pending_clarification(

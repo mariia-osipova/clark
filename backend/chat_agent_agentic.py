@@ -119,6 +119,10 @@ class ShopState(TypedDict):
     pending_clarification: dict | None   # issued to client; persisted in SqliteSaver
     reply: str
 
+    # Checkout output
+    forgotten_suggestion: dict | None    # {product_id, name, quantity, price, days_ago}
+    checkout_result: dict | None         # {order_id, total, item_count} or {error: str}
+
     # User context — loaded from data/user_profile.json, read-only inside graph
     user_profile: dict
 
@@ -373,11 +377,14 @@ def _read_session_cart(session_id: str, catalog: list[dict]) -> list[dict]:
 
 _CLASSIFY_SYSTEM = (
     "Sos un asistente de compras. Analizá el mensaje del usuario y respondé SOLO con JSON:\n"
-    '{"turn_kind": "shopping|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection", '
+    '{"turn_kind": "shopping|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection|checkout", '
     '"planned_items": [{"query": "nombre producto", "quantity": 1}]}\n'
     "Para mensajes que NO son compras (saludos, preguntas generales), usá turn_kind=smalltalk "
     "y planned_items=[].\n"
     'Para generar canasta mensual, usá turn_kind=monthly_basket y planned_items=[].\n'
+    "Para mensajes donde el usuario quiere confirmar/finalizar su compra, hacer checkout o pagar "
+    "su carrito (ej: 'confirmar pedido', 'comprar carrito', 'finalizar compra', 'checkout', 'pagar', "
+    "'quiero pagar', 'proceder con el pago'), usá turn_kind=checkout y planned_items=[].\n"
     "REGLA SUGERENCIAS: Si el último mensaje del asistente ofreció alternativas o sugerencias "
     "para un producto que no se encontró:\n"
     "- Si el usuario ACEPTA (sí, dale, ok, quiero la primera, agregá esa, etc.) o elige una opción "
@@ -688,6 +695,32 @@ def _build_graph(catalog: list[dict], api_key: str):
         if pending:
             return {"reply": pending["question"]}
 
+        # Forgotten item suggestion — deterministic, no LLM needed
+        suggestion = state.get("forgotten_suggestion")
+        if suggestion:
+            days_ago = suggestion.get("days_ago", 0)
+            day_str = "ayer" if days_ago <= 1 else f"hace {days_ago} días"
+            name = suggestion.get("name", "ese producto")
+            qty = suggestion.get("quantity", 1)
+            return {"reply": (
+                f"¡Espera! {day_str} compraste {name} (x{qty}) y no está en tu carrito. "
+                f"¿Lo agregamos antes de confirmar, o seguimos sin él?"
+            )}
+
+        # Checkout confirmed — deterministic, no LLM needed
+        checkout_result = state.get("checkout_result")
+        if checkout_result:
+            if checkout_result.get("error"):
+                return {"reply": checkout_result["error"]}
+            order_id = checkout_result.get("order_id", "")
+            total = checkout_result.get("total", 0.0)
+            item_count = checkout_result.get("item_count", 0)
+            s = "s" if item_count != 1 else ""
+            return {"reply": (
+                f"¡Listo! Tu pedido fue confirmado. "
+                f"Orden #{order_id} — {item_count} producto{s} por ${total:.2f}. ¡Gracias por tu compra!"
+            )}
+
         added = [r for r in (state.get("resolutions") or []) if r.get("status") == "resolved"]
         missing = state.get("missing_items") or []
 
@@ -754,6 +787,72 @@ def _build_graph(catalog: list[dict], api_key: str):
             result["last_suggestions"] = suggestions
         return result
 
+    # ── Node: check_forgotten_items ───────────────────────────────────────────
+    def check_forgotten_items(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Compares current cart against last order.
+        If an item was bought before but isn't in the cart, populate forgotten_suggestion.
+        Otherwise set forgotten_suggestion=None so execute_checkout fires next.
+        """
+        from datetime import datetime
+        from backend.db import get_last_order
+
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        current_cart = _read_session_cart(sid, catalog)
+        current_ids = {item["product_id"] for item in current_cart}
+
+        last_order = get_last_order()
+        if not last_order or not last_order.get("cart"):
+            return {"forgotten_suggestion": None}
+
+        missing = [
+            item for item in last_order["cart"]
+            if item.get("product_id") not in current_ids
+        ]
+        if not missing:
+            return {"forgotten_suggestion": None}
+
+        forgotten = missing[0]
+        try:
+            order_dt = datetime.strptime(last_order["created_at"][:19], "%Y-%m-%d %H:%M:%S")
+            days_ago = (datetime.utcnow() - order_dt).days
+        except Exception:
+            days_ago = 0
+
+        return {
+            "forgotten_suggestion": {
+                "product_id": forgotten.get("product_id", ""),
+                "name": forgotten.get("name", ""),
+                "quantity": forgotten.get("quantity", 1),
+                "price": forgotten.get("price", 0.0),
+                "days_ago": days_ago,
+            }
+        }
+
+    # ── Node: execute_checkout ─────────────────────────────────────────────────
+    def execute_checkout(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Places the order using db.place_order().
+        Only reached when forgotten_suggestion is None.
+        """
+        from backend.db import place_order as db_place_order
+
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        current_cart = _read_session_cart(sid, catalog)
+
+        if not current_cart:
+            return {"checkout_result": {"error": "El carrito está vacío."}}
+
+        total = round(sum(item["price"] * item["quantity"] for item in current_cart), 2)
+        order_id = str(uuid.uuid4())[:8]
+        db_place_order(sid, order_id, current_cart, total)
+
+        return {
+            "checkout_result": {
+                "order_id": order_id,
+                "total": total,
+                "item_count": len(current_cart),
+            }
+        }
+
     # ── Routing ────────────────────────────────────────────────────────────────
     def route_after_classify(state: ShopState) -> str:
         turn_kind = state.get("turn_kind", "smalltalk")
@@ -763,7 +862,12 @@ def _build_graph(catalog: list[dict], api_key: str):
             return "accept_suggestion"
         if turn_kind == "suggestion_rejection":
             return "reject_suggestion"
+        if turn_kind == "checkout":
+            return "check_forgotten_items"
         return "resolve_items"
+
+    def route_after_forgotten_check(state: ShopState) -> str:
+        return "summarize" if state.get("forgotten_suggestion") is not None else "execute_checkout"
 
     def route_after_apply(state: ShopState) -> str:
         if any(r.get("status") == "needs_clarification" for r in (state.get("resolutions") or [])):
@@ -778,6 +882,8 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_node("reject_suggestion", reject_suggestion)
     graph.add_node("apply_cart", apply_cart)
     graph.add_node("emit_clarification", emit_clarification)
+    graph.add_node("check_forgotten_items", check_forgotten_items)
+    graph.add_node("execute_checkout", execute_checkout)
     graph.add_node("summarize", summarize)
 
     graph.add_edge(START, "classify_turn")
@@ -787,6 +893,8 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_edge("reject_suggestion", "summarize")  # skip cart — nothing to add
     graph.add_conditional_edges("apply_cart", route_after_apply)
     graph.add_edge("emit_clarification", "summarize")
+    graph.add_conditional_edges("check_forgotten_items", route_after_forgotten_check)
+    graph.add_edge("execute_checkout", "summarize")
     graph.add_edge("summarize", END)
 
     return graph.compile(checkpointer=_get_checkpointer())
@@ -1079,6 +1187,8 @@ def handle_chat(
         "last_suggestions": prior_suggestions,
         "pending_clarification": None,
         "reply": "",
+        "forgotten_suggestion": None,
+        "checkout_result": None,
         "session_id": session_id,
         "initial_cart": initial_cart,
         "history": _trim_history(history),
@@ -1105,4 +1215,5 @@ def handle_chat(
         "clarification": clarification,
         "missing_items": final_state.get("missing_items") or [],
         "suggestions": final_state.get("suggestions") or [],
+        "checkout_result": final_state.get("checkout_result"),
     }
