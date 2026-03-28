@@ -2,6 +2,14 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-27 — Jeremias — VERSION2 agent: query decomposition, substitution, missing tracking
+
+**Type:** feature
+
+Updated `chat_agent_agentic.py` for V2. System prompt now instructs the agent to decompose recipe/goal prompts into per-ingredient `search_products` calls, apply nearest-match substitution when exact isn't found, and reply with a structured ✅/🔄/❌ summary. Added `report_missing` tool (records unfindable ingredients) and `missing_items: list[str]` to `AgentState` and the `handle_chat()` return dict. `handle_chat()` now returns `{ reply, cart, clarification, missing_items }`. 82 tests passing.
+
+---
+
 ## 2026-03-27 — Jeremias — Switched agent to LangGraph
 
 **Type:** architecture
