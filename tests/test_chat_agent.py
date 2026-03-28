@@ -196,18 +196,33 @@ class TestValidateCart:
 
 # ─── handle_chat integration tests ───────────────────────────────────────────
 
+def _make_ai_message(content="ok", tool_calls=None):
+    """Build a minimal AIMessage-like mock for LangGraph agent node output."""
+    from langchain_core.messages import AIMessage
+    if tool_calls:
+        return AIMessage(content=content or "", tool_calls=tool_calls)
+    return AIMessage(content=content)
+
+
+def _make_graph_state(reply="ok", result_cart=None, clarification=None):
+    """Build a minimal final_state dict as returned by graph.invoke()."""
+    from langchain_core.messages import AIMessage
+    return {
+        "messages": [AIMessage(content=reply)],
+        "catalog": [],
+        "result_cart": result_cart,
+        "clarification": clarification,
+    }
+
+
 class TestHandleChat:
     @patch("backend.chat_agent_agentic._load_catalog")
-    @patch("backend.chat_agent_agentic._openai")
-    def test_returns_reply_on_plain_response(self, mock_openai_fn, mock_load_catalog, sample_catalog):
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_returns_reply_on_plain_response(self, mock_build_graph, mock_load_catalog, sample_catalog):
         mock_load_catalog.return_value = sample_catalog
-        client = MagicMock()
-        client.chat.completions.create.return_value = _make_openai_response(
-            content="Hola, ¿en qué te puedo ayudar?"
-        )
-        mock_openai = MagicMock()
-        mock_openai.OpenAI.return_value = client
-        mock_openai_fn.return_value = mock_openai
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="Hola, ¿en qué te puedo ayudar?")
+        mock_build_graph.return_value = mock_app
 
         result = handle_chat("Hola", [], [])
 
@@ -216,21 +231,23 @@ class TestHandleChat:
         assert result["clarification"] is None
 
     @patch("backend.chat_agent_agentic._load_catalog")
-    @patch("backend.chat_agent_agentic._openai")
-    def test_set_cart_tool_updates_cart(self, mock_openai_fn, mock_load_catalog, sample_catalog):
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_set_cart_tool_updates_cart(self, mock_build_graph, mock_load_catalog, sample_catalog):
         mock_load_catalog.return_value = sample_catalog
-        client = MagicMock()
-        tool_args = {
-            "items": [{"product_id": "p1", "name": "Leche", "price": 350.0, "quantity": 1}]
-        }
-        client.chat.completions.create.return_value = _make_openai_response(
-            content="Agregué la leche.",
-            tool_name="set_cart",
-            tool_args=tool_args,
+        expected_cart = [{
+            "product_id": "p1",
+            "name": "Leche entera La Serenísima",
+            "brand": "La Serenísima",
+            "package_size": "1L",
+            "price": 350.0,
+            "quantity": 1,
+            "image_url": "https://example.com/leche.jpg",
+        }]
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(
+            reply="Agregué la leche.", result_cart=expected_cart
         )
-        mock_openai = MagicMock()
-        mock_openai.OpenAI.return_value = client
-        mock_openai_fn.return_value = mock_openai
+        mock_build_graph.return_value = mock_app
 
         result = handle_chat("quiero leche", [], [])
 
@@ -239,25 +256,22 @@ class TestHandleChat:
         assert result["cart"][0]["product_id"] == "p1"
 
     @patch("backend.chat_agent_agentic._load_catalog")
-    @patch("backend.chat_agent_agentic._openai")
-    def test_request_clarification_tool_returns_clarification(self, mock_openai_fn, mock_load_catalog, sample_catalog):
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_request_clarification_tool_returns_clarification(self, mock_build_graph, mock_load_catalog, sample_catalog):
         mock_load_catalog.return_value = sample_catalog
-        client = MagicMock()
-        tool_args = {
+        expected_clarification = {
             "question": "¿Cuál leche querés?",
             "options": [
                 {"id": "opt1", "label": "Leche entera 1L"},
                 {"id": "opt2", "label": "Leche descremada 1L"},
             ],
+            "pending_request_id": "some-uuid",
         }
-        client.chat.completions.create.return_value = _make_openai_response(
-            content="¿Cuál leche querés?",
-            tool_name="request_clarification",
-            tool_args=tool_args,
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(
+            reply="¿Cuál leche querés?", clarification=expected_clarification
         )
-        mock_openai = MagicMock()
-        mock_openai.OpenAI.return_value = client
-        mock_openai_fn.return_value = mock_openai
+        mock_build_graph.return_value = mock_app
 
         result = handle_chat("quiero leche", [], [])
 
@@ -267,60 +281,56 @@ class TestHandleChat:
         assert "pending_request_id" in result["clarification"]
 
     @patch("backend.chat_agent_agentic._load_catalog")
-    @patch("backend.chat_agent_agentic._openai")
-    def test_openai_is_called_once_per_turn(self, mock_openai_fn, mock_load_catalog, sample_catalog):
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_openai_is_called_once_per_turn(self, mock_build_graph, mock_load_catalog, sample_catalog):
         mock_load_catalog.return_value = sample_catalog
-        client = MagicMock()
-        client.chat.completions.create.return_value = _make_openai_response(content="ok")
-        mock_openai = MagicMock()
-        mock_openai.OpenAI.return_value = client
-        mock_openai_fn.return_value = mock_openai
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="ok")
+        mock_build_graph.return_value = mock_app
 
         handle_chat("test", [], [])
 
-        client.chat.completions.create.assert_called_once()
+        mock_app.invoke.assert_called_once()
 
     @patch("backend.chat_agent_agentic._load_catalog")
-    @patch("backend.chat_agent_agentic._openai")
-    def test_history_is_included_in_messages(self, mock_openai_fn, mock_load_catalog, sample_catalog):
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_history_is_included_in_messages(self, mock_build_graph, mock_load_catalog, sample_catalog):
         mock_load_catalog.return_value = sample_catalog
-        client = MagicMock()
-        client.chat.completions.create.return_value = _make_openai_response(content="ok")
-        mock_openai = MagicMock()
-        mock_openai.OpenAI.return_value = client
-        mock_openai_fn.return_value = mock_openai
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="ok")
+        mock_build_graph.return_value = mock_app
 
         history = [{"role": "user", "content": "mensaje anterior"}]
         handle_chat("nuevo mensaje", history, [])
 
-        call_kwargs = client.chat.completions.create.call_args
-        messages = call_kwargs.kwargs.get("messages") or call_kwargs.args[0] if call_kwargs.args else call_kwargs.kwargs["messages"]
-        contents = [m["content"] for m in messages]
-        assert "mensaje anterior" in contents
-        assert "nuevo mensaje" in contents
+        call_args = mock_app.invoke.call_args
+        state = call_args.args[0] if call_args.args else call_args.kwargs.get("input", call_args.args[0])
+        messages = state["messages"]
+        contents = [
+            m.content if hasattr(m, "content") else m.get("content", "")
+            for m in messages
+        ]
+        assert any("mensaje anterior" in c for c in contents)
+        assert any("nuevo mensaje" in c for c in contents)
 
     @patch("backend.chat_agent_agentic._load_catalog")
-    @patch("backend.chat_agent_agentic._openai")
-    def test_empty_catalog_does_not_crash(self, mock_openai_fn, mock_load_catalog):
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_empty_catalog_does_not_crash(self, mock_build_graph, mock_load_catalog):
         mock_load_catalog.return_value = []
-        client = MagicMock()
-        client.chat.completions.create.return_value = _make_openai_response(content="ok")
-        mock_openai = MagicMock()
-        mock_openai.OpenAI.return_value = client
-        mock_openai_fn.return_value = mock_openai
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="ok")
+        mock_build_graph.return_value = mock_app
 
         result = handle_chat("hola", [], [])
         assert "reply" in result
 
     @patch("backend.chat_agent_agentic._load_catalog")
-    @patch("backend.chat_agent_agentic._openai")
-    def test_result_always_has_required_keys(self, mock_openai_fn, mock_load_catalog, sample_catalog):
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_result_always_has_required_keys(self, mock_build_graph, mock_load_catalog, sample_catalog):
         mock_load_catalog.return_value = sample_catalog
-        client = MagicMock()
-        client.chat.completions.create.return_value = _make_openai_response(content="ok")
-        mock_openai = MagicMock()
-        mock_openai.OpenAI.return_value = client
-        mock_openai_fn.return_value = mock_openai
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="ok")
+        mock_build_graph.return_value = mock_app
 
         result = handle_chat("hola", [], [])
         assert "reply" in result
