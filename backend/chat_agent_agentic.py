@@ -26,6 +26,12 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
+from backend.clarification_store import (
+    clear_pending_clarification,
+    resolve_clarification_option,
+    store_pending_clarification,
+)
+
 
 ROOT = Path(__file__).resolve().parent.parent
 CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
@@ -189,6 +195,31 @@ def _trim_history(history: list[dict]) -> list[dict]:
     return trimmed
 
 
+def _build_clarification_context(record: dict, selected_option: dict) -> str:
+    """Build authoritative context for a resolved clarification choice."""
+    product = selected_option.get("product") or {}
+    details = []
+    if product.get("name"):
+        details.append(f"nombre={product['name']}")
+    if product.get("brand"):
+        details.append(f"marca={product['brand']}")
+    if product.get("package_size"):
+        details.append(f"tamaño={product['package_size']}")
+    if product.get("price") is not None:
+        details.append(f"precio=${float(product['price']):.2f}")
+    if product.get("id"):
+        details.append(f"product_id={product['id']}")
+
+    detail_text = ", ".join(details) if details else "sin detalles de producto"
+    return (
+        "Respuesta de aclaración confirmada por el usuario. "
+        f"Pregunta original: {record.get('question', '')}. "
+        f"Opción elegida: {selected_option.get('label', selected_option.get('id', 'opción'))}. "
+        f"Detalles: {detail_text}. "
+        "Usá esta elección como fuente de verdad para continuar."
+    )
+
+
 # ─── Tool implementations ─────────────────────────────────────────────────────
 
 def _make_tools(catalog: list[dict]):
@@ -317,6 +348,7 @@ def handle_chat(
     history: list[dict],
     cart: list[dict],
     clarification_response: dict | None = None,
+    session_token: str | None = None,
     context: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -333,6 +365,8 @@ def handle_chat(
 
     # Build initial message list
     init_messages: list = [SystemMessage(content=_build_system_prompt())]
+    resolved_pending_request_id: str | None = None
+    effective_message = message
 
     if cart:
         cart_text = "Carrito actual:\n" + "\n".join(
@@ -345,12 +379,17 @@ def handle_chat(
         init_messages.append(SystemMessage(content=context))
 
     if clarification_response:
-        init_messages.append(SystemMessage(
-            content=(
-                f"El usuario eligió la opción: {clarification_response.get('chosen_option_id')} "
-                f"para la solicitud pendiente: {clarification_response.get('pending_request_id')}"
-            )
-        ))
+        resolved_pending_request_id = clarification_response.get("pending_request_id")
+        record, selected_option = resolve_clarification_option(
+            session_token,
+            resolved_pending_request_id,
+            clarification_response.get("chosen_option_id"),
+        )
+        init_messages.append(
+            SystemMessage(content=_build_clarification_context(record, selected_option))
+        )
+        if not effective_message or effective_message == "__clarification__":
+            effective_message = selected_option.get("label", "Elegí esta opción.")
 
     for msg in _trim_history(history):
         if msg["role"] == "user":
@@ -358,7 +397,7 @@ def handle_chat(
         elif msg["role"] == "assistant":
             init_messages.append(AIMessage(content=msg["content"]))
 
-    init_messages.append(HumanMessage(content=message))
+    init_messages.append(HumanMessage(content=effective_message))
 
     final_state = app.invoke(
         {
@@ -370,8 +409,13 @@ def handle_chat(
         config={"recursion_limit": 30},
     )
 
+    if resolved_pending_request_id:
+        clear_pending_clarification(session_token, resolved_pending_request_id)
+
     last_msg = final_state["messages"][-1]
     clarification = final_state.get("clarification")
+    if clarification:
+        store_pending_clarification(session_token, clarification)
     if isinstance(last_msg, AIMessage) and last_msg.content:
         reply = last_msg.content
     elif clarification:

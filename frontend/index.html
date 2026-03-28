@@ -73,10 +73,19 @@
   <!-- Clarification modal -->
   <div class="modal hidden" id="clarification-modal">
     <div class="modal__overlay"></div>
-    <div class="modal__box">
-      <p class="modal__question" id="modal-question"></p>
-      <div class="modal__options" id="modal-options"></div>
-      <button class="btn btn--secondary" id="modal-cancel">Cancelar</button>
+    <div class="modal__box" role="dialog" aria-modal="true" aria-labelledby="modal-question">
+      <h2 class="modal__question" id="modal-question"></h2>
+      <form id="clarification-form">
+        <fieldset class="modal__fieldset">
+          <legend class="visually-hidden">Opciones de aclaración</legend>
+          <div class="modal__options" id="modal-options"></div>
+        </fieldset>
+        <p class="modal__error hidden" id="modal-error" aria-live="polite"></p>
+        <div class="modal__actions">
+          <button class="btn btn--primary" id="modal-confirm" type="submit" disabled>Confirmar</button>
+          <button class="btn btn--secondary" id="modal-cancel" type="button">Cancelar</button>
+        </div>
+      </form>
     </div>
   </div>
 

@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
+from backend.clarification_store import ClarificationStateError
 from backend.db import get_db
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -174,14 +175,22 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _handle_chat(self, body: dict):
         try:
             from backend.chat_agent_agentic import handle_chat
+            session_token = self.headers.get("X-Session-Token")
+            if body.get("clarification_response") and not session_token:
+                raise ClarificationStateError(
+                    "Falta X-Session-Token para resolver la aclaración. Probá de nuevo."
+                )
             result = handle_chat(
                 message=body.get("message", ""),
                 history=body.get("history", []),
                 cart=body.get("cart", []),
                 clarification_response=body.get("clarification_response"),
+                session_token=session_token,
                 context=_assemble_chat_context(),
             )
             self.send_json(envelope(data=result))
+        except ClarificationStateError as e:
+            self.send_json(envelope(error=str(e)), 400)
         except Exception as e:
             self.send_json(envelope(error=str(e)), 500)
 

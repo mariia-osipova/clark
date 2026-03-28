@@ -17,7 +17,7 @@ import sys
 import threading
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from backend.app import _validate_order_cart, _assemble_chat_context, envelope
+from backend.clarification_store import _reset_pending_clarifications
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ def test_server(tmp_path):
     from backend.app import RequestHandler
 
     init_db()
+    _reset_pending_clarifications()
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), RequestHandler)
     port = server.server_address[1]
@@ -85,6 +87,7 @@ def test_server(tmp_path):
     yield f"http://127.0.0.1:{port}"
 
     server.shutdown()
+    _reset_pending_clarifications()
     del os.environ["DB_PATH"]
 
 
@@ -93,14 +96,28 @@ def _get(url: str) -> dict:
         return json.loads(r.read())
 
 
-def _post(url: str, body: dict) -> tuple[dict, int]:
+def _post(url: str, body: dict, headers: dict | None = None) -> tuple[dict, int]:
     data = json.dumps(body).encode()
-    req = Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    merged_headers = {"Content-Type": "application/json"}
+    if headers:
+        merged_headers.update(headers)
+    req = Request(url, data=data, headers=merged_headers, method="POST")
     try:
         with urlopen(req) as r:
             return json.loads(r.read()), r.status
     except HTTPError as e:
         return json.loads(e.read()), e.code
+
+
+def _graph_state(reply="ok", result_cart=None, clarification=None):
+    from langchain_core.messages import AIMessage
+
+    return {
+        "messages": [AIMessage(content=reply)],
+        "result_cart": result_cart,
+        "clarification": clarification,
+        "missing_items": [],
+    }
 
 
 # ─── Envelope tests ───────────────────────────────────────────────────────────
@@ -306,6 +323,115 @@ class TestPreferencesEndpoint:
         result, status = _post(f"{test_server}/api/v1/preferences", {"preferences": "not-a-dict"})
         assert status == 400
         assert result["ok"] is False
+
+
+class TestChatEndpoint:
+    def test_clarification_response_requires_session_token(self, test_server):
+        result, status = _post(
+            f"{test_server}/api/v1/chat",
+            {
+                "message": "__clarification__",
+                "history": [],
+                "cart": [],
+                "clarification_response": {
+                    "pending_request_id": "pending-1",
+                    "chosen_option_id": "opt1",
+                },
+            },
+        )
+        assert status == 400
+        assert result["ok"] is False
+        assert "X-Session-Token" in result["error"]
+
+    def test_clarification_round_trip_with_same_session_token(self, test_server, sample_catalog):
+        session_headers = {"X-Session-Token": "session-1"}
+        clarification = {
+            "question": "¿Cuál leche querés?",
+            "options": [
+                {"id": "opt1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]},
+                {"id": "opt2", "label": "Yogur frutilla Danone", "product": sample_catalog[1]},
+            ],
+            "pending_request_id": "pending-1",
+        }
+        mock_app = MagicMock()
+        mock_app.invoke.side_effect = [
+            _graph_state(reply="¿Cuál leche querés?", clarification=clarification),
+            _graph_state(
+                reply="Perfecto, agregué la leche elegida.",
+                result_cart=[{
+                    "product_id": "p1",
+                    "name": "Leche entera La Serenísima",
+                    "brand": "La Serenísima",
+                    "package_size": "1L",
+                    "price": 350.0,
+                    "quantity": 1,
+                    "image_url": "https://example.com/leche.jpg",
+                }],
+            ),
+        ]
+
+        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), patch(
+            "backend.chat_agent_agentic._build_graph", return_value=mock_app
+        ):
+            first, status1 = _post(
+                f"{test_server}/api/v1/chat",
+                {"message": "quiero leche", "history": [], "cart": []},
+                headers=session_headers,
+            )
+            second, status2 = _post(
+                f"{test_server}/api/v1/chat",
+                {
+                    "message": "Leche entera La Serenísima 1L",
+                    "history": [{"role": "assistant", "content": first["data"]["reply"]}],
+                    "cart": [],
+                    "clarification_response": {
+                        "pending_request_id": "pending-1",
+                        "chosen_option_id": "opt1",
+                    },
+                },
+                headers=session_headers,
+            )
+
+        assert status1 == 200
+        assert status2 == 200
+        assert first["data"]["clarification"]["pending_request_id"] == "pending-1"
+        assert second["data"]["cart"][0]["product_id"] == "p1"
+
+    def test_wrong_session_token_cannot_resolve_other_sessions_clarification(self, test_server, sample_catalog):
+        clarification = {
+            "question": "¿Cuál leche querés?",
+            "options": [
+                {"id": "opt1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]},
+            ],
+            "pending_request_id": "pending-1",
+        }
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _graph_state(reply="¿Cuál leche querés?", clarification=clarification)
+
+        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), patch(
+            "backend.chat_agent_agentic._build_graph", return_value=mock_app
+        ):
+            _post(
+                f"{test_server}/api/v1/chat",
+                {"message": "quiero leche", "history": [], "cart": []},
+                headers={"X-Session-Token": "session-1"},
+            )
+            second, status2 = _post(
+                f"{test_server}/api/v1/chat",
+                {
+                    "message": "Leche entera La Serenísima 1L",
+                    "history": [],
+                    "cart": [],
+                    "clarification_response": {
+                        "pending_request_id": "pending-1",
+                        "chosen_option_id": "opt1",
+                    },
+                },
+                headers={"X-Session-Token": "session-2"},
+            )
+
+        assert status2 == 400
+        assert second["ok"] is False
 
 
 # ─── Unit: chat context assembly ─────────────────────────────────────────────

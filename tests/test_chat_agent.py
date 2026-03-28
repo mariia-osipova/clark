@@ -29,6 +29,7 @@ from backend.chat_agent_agentic import (
     _validate_cart,
     handle_chat,
 )
+from backend.clarification_store import _reset_pending_clarifications
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -210,10 +211,12 @@ class TestHandleChat:
     def setup_method(self):
         from backend.chat_agent_agentic import _reset_app_cache
         _reset_app_cache()
+        _reset_pending_clarifications()
 
     def teardown_method(self):
         from backend.chat_agent_agentic import _reset_app_cache
         _reset_app_cache()
+        _reset_pending_clarifications()
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
@@ -278,6 +281,96 @@ class TestHandleChat:
         assert result["clarification"]["question"] == "¿Cuál leche querés?"
         assert len(result["clarification"]["options"]) == 2
         assert "pending_request_id" in result["clarification"]
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_clarification_round_trip_uses_stored_option_context(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        mock_load_catalog.return_value = sample_catalog
+        pending_id = "pending-1"
+        clarification = {
+            "question": "¿Cuál leche querés?",
+            "options": [
+                {"id": "opt1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]},
+                {"id": "opt2", "label": "Yogur frutilla Danone", "product": sample_catalog[1]},
+            ],
+            "pending_request_id": pending_id,
+        }
+        mock_app = MagicMock()
+        mock_app.invoke.side_effect = [
+            _make_graph_state(reply="¿Cuál leche querés?", clarification=clarification),
+            _make_graph_state(
+                reply="Perfecto, agregué la leche elegida.",
+                result_cart=[{
+                    "product_id": "p1",
+                    "name": "Leche entera La Serenísima",
+                    "brand": "La Serenísima",
+                    "package_size": "1L",
+                    "price": 350.0,
+                    "quantity": 1,
+                    "image_url": "https://example.com/leche.jpg",
+                }],
+            ),
+        ]
+        mock_build_graph.return_value = mock_app
+
+        first = handle_chat("quiero leche", [], [], session_token="session-1")
+        second = handle_chat(
+            "__clarification__",
+            [{"role": "assistant", "content": first["reply"]}],
+            [],
+            clarification_response={"pending_request_id": pending_id, "chosen_option_id": "opt1"},
+            session_token="session-1",
+        )
+
+        assert first["clarification"] is not None
+        assert second["cart"] is not None
+        assert second["cart"][0]["product_id"] == "p1"
+
+        second_call_state = mock_app.invoke.call_args_list[1].args[0]
+        contents = [getattr(message, "content", "") for message in second_call_state["messages"]]
+        assert any("Leche entera La Serenísima 1L" in content for content in contents)
+        assert any("product_id=p1" in content for content in contents)
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_invalid_pending_id_raises_safe_error(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        mock_load_catalog.return_value = sample_catalog
+        mock_build_graph.return_value = MagicMock()
+
+        with pytest.raises(ValueError, match="aclaración"):
+            handle_chat(
+                "__clarification__",
+                [],
+                [],
+                clarification_response={"pending_request_id": "missing", "chosen_option_id": "opt1"},
+                session_token="session-1",
+            )
+
+    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._build_graph")
+    def test_invalid_option_id_raises_safe_error(self, mock_build_graph, mock_load_catalog, sample_catalog):
+        mock_load_catalog.return_value = sample_catalog
+        clarification = {
+            "question": "¿Cuál leche querés?",
+            "options": [
+                {"id": "opt1", "label": "Leche entera La Serenísima 1L", "product": sample_catalog[0]},
+            ],
+            "pending_request_id": "pending-1",
+        }
+        mock_app = MagicMock()
+        mock_app.invoke.return_value = _make_graph_state(reply="¿Cuál leche querés?", clarification=clarification)
+        mock_build_graph.return_value = mock_app
+
+        handle_chat("quiero leche", [], [], session_token="session-1")
+
+        with pytest.raises(ValueError, match="opción elegida"):
+            handle_chat(
+                "__clarification__",
+                [],
+                [],
+                clarification_response={"pending_request_id": "pending-1", "chosen_option_id": "bad-option"},
+                session_token="session-1",
+            )
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
@@ -346,10 +439,12 @@ class TestAgenticLoop:
     def setup_method(self):
         from backend.chat_agent_agentic import _reset_app_cache
         _reset_app_cache()
+        _reset_pending_clarifications()
 
     def teardown_method(self):
         from backend.chat_agent_agentic import _reset_app_cache
         _reset_app_cache()
+        _reset_pending_clarifications()
 
     def _ai_with_tool_call(self, tool_name, tool_args, call_id="call_1"):
         """AIMessage that triggers a tool call."""

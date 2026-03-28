@@ -3,6 +3,7 @@
 
 # Data (generated at runtime)
 data/proxy_store.db
+backend/data/proxy_store.db
 data/catalog_snapshot.json
 data/product_semantic_index.json
 

@@ -39,6 +39,8 @@ Returns the normalized product catalog.
 
 Send a chat message. Returns assistant reply, authoritative cart state, clarification metadata when needed, and missing ingredient tracking.
 
+**Header:** `X-Session-Token: <anonymous-chat-session-token>`
+
 **Request body:**
 ```json
 {
@@ -54,7 +56,7 @@ Send a chat message. Returns assistant reply, authoritative cart state, clarific
 }
 ```
 
-`clarification_response` is optional and should only be sent when the user is answering a previously returned clarification prompt.
+`clarification_response` is optional and should only be sent when the user is answering a previously returned clarification prompt. When it is sent, `X-Session-Token` must match the session that received the original clarification.
 
 **Response `data`:**
 ```json
@@ -97,6 +99,7 @@ Send a chat message. Returns assistant reply, authoritative cart state, clarific
 
 Notes:
 - When `clarification` is present, `reply` mirrors the clarification question so the chat transcript stays readable.
+- Clarification continuity is server-validated by `X-Session-Token` plus `pending_request_id`; stale or foreign selections return `400`.
 - `missing_items` contains normalized ingredient/product names the agent could not find while decomposing a recipe or broad shopping goal.
 - Server-side history is trimmed by character budget before calling the model; clients can still send full local history.
 

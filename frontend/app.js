@@ -9,6 +9,8 @@ const state = {
   cart: loadCart(),
   chatHistory: [],
   currentTab: 'catalog',
+  sessionToken: loadSessionToken(),
+  clarification: null,
 };
 
 // ─── Boot ─────────────────────────────────────────────────────────────────────
@@ -16,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindTabs();
   bindChat();
   bindCartEvents();
+  bindClarificationForm();
   bindModalCancel();
   renderCart();
   loadCatalog();
@@ -206,6 +209,15 @@ function saveCart() {
   localStorage.setItem('cart', JSON.stringify(state.cart));
 }
 
+function loadSessionToken() {
+  const existing = localStorage.getItem('chatSessionToken');
+  if (existing) return existing;
+
+  const created = window.crypto?.randomUUID?.() || `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem('chatSessionToken', created);
+  return created;
+}
+
 // ─── Chat ─────────────────────────────────────────────────────────────────────
 function bindChat() {
   const input = document.getElementById('chat-input');
@@ -231,7 +243,7 @@ async function sendChat() {
   try {
     const res = await fetch(`${API}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({
         message,
         history: state.chatHistory.slice(-20),
@@ -274,56 +286,134 @@ function showClarificationModal(clarification) {
   const modal = document.getElementById('clarification-modal');
   const question = document.getElementById('modal-question');
   const options = document.getElementById('modal-options');
+  const errorEl = document.getElementById('modal-error');
+  const confirmBtn = document.getElementById('modal-confirm');
 
+  state.clarification = {
+    ...clarification,
+    selectedOptionId: null,
+    submitting: false,
+  };
   question.textContent = clarification.question;
   options.innerHTML = '';
+  errorEl.textContent = '';
+  errorEl.classList.add('hidden');
+  confirmBtn.disabled = true;
 
   clarification.options.forEach(opt => {
-    const btn = document.createElement('div');
-    btn.className = 'modal__option';
-    btn.innerHTML = `
+    const choice = document.createElement('label');
+    choice.className = 'modal__choice';
+    choice.innerHTML = `
+      <input type="radio" name="clarification-option" value="${esc(opt.id)}" />
       <img src="${esc(opt.product?.image_url || '')}" alt="${esc(opt.label)}" />
       <div>
         <div class="modal__option-label">${esc(opt.label)}</div>
         <div class="modal__option-detail">${esc(opt.product?.package_size || '')} · $${(opt.product?.price || 0).toFixed(2)}</div>
       </div>
     `;
-    btn.addEventListener('click', () => resolveClarification(clarification.pending_request_id, opt.id));
-    options.appendChild(btn);
+    options.appendChild(choice);
   });
 
   modal.classList.remove('hidden');
+  options.querySelector('input[name="clarification-option"]')?.focus();
 }
 
-async function resolveClarification(pendingId, chosenOptionId) {
-  closeClarificationModal();
+async function resolveClarification() {
+  if (!state.clarification || !state.clarification.selectedOptionId || state.clarification.submitting) return;
+
   const loadingEl = appendChatMsg('loading', 'Procesando selección...');
+  const errorEl = document.getElementById('modal-error');
+  const confirmBtn = document.getElementById('modal-confirm');
+  const cancelBtn = document.getElementById('modal-cancel');
+  const radios = document.querySelectorAll('input[name="clarification-option"]');
+  const selectedOption = state.clarification.options.find(opt => opt.id === state.clarification.selectedOptionId);
+
+  state.clarification.submitting = true;
+  confirmBtn.disabled = true;
+  cancelBtn.disabled = true;
+  errorEl.textContent = '';
+  errorEl.classList.add('hidden');
+  radios.forEach(radio => { radio.disabled = true; });
+
   try {
     const res = await fetch(`${API}/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({
-        message: `__clarification__`,
+        message: selectedOption?.label || '__clarification__',
         history: state.chatHistory.slice(-20),
         cart: state.cart,
-        clarification_response: { pending_request_id: pendingId, chosen_option_id: chosenOptionId },
+        clarification_response: {
+          pending_request_id: state.clarification.pending_request_id,
+          chosen_option_id: state.clarification.selectedOptionId,
+        },
       }),
     });
     const json = await res.json();
     loadingEl.remove();
     if (!json.ok) throw new Error(json.error);
-    const { reply, cart } = json.data;
+
+    const { reply, cart, clarification } = json.data;
+    if (selectedOption) {
+      state.chatHistory.push({ role: 'user', content: selectedOption.label });
+      appendChatMsg('user', selectedOption.label);
+    }
     state.chatHistory.push({ role: 'assistant', content: reply });
     appendChatMsg('assistant', reply);
-    if (cart) setCart(cart);
+    if (clarification) {
+      showClarificationModal(clarification);
+    } else {
+      closeClarificationModal();
+      if (cart) setCart(cart);
+    }
   } catch (err) {
     loadingEl.remove();
-    appendChatMsg('assistant', `Error: ${err.message}`);
+    state.clarification.submitting = false;
+    confirmBtn.disabled = !state.clarification.selectedOptionId;
+    cancelBtn.disabled = false;
+    radios.forEach(radio => { radio.disabled = false; });
+    errorEl.textContent = err.message;
+    errorEl.classList.remove('hidden');
   }
 }
 
 function closeClarificationModal() {
   document.getElementById('clarification-modal').classList.add('hidden');
+  document.getElementById('modal-error').textContent = '';
+  document.getElementById('modal-error').classList.add('hidden');
+  document.getElementById('modal-confirm').disabled = true;
+  document.getElementById('modal-cancel').disabled = false;
+  state.clarification = null;
+}
+
+function bindClarificationForm() {
+  const form = document.getElementById('clarification-form');
+  const options = document.getElementById('modal-options');
+  const confirmBtn = document.getElementById('modal-confirm');
+
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    resolveClarification();
+  });
+
+  options.addEventListener('change', e => {
+    const radio = e.target.closest('input[name="clarification-option"]');
+    if (!radio || !state.clarification) return;
+
+    state.clarification.selectedOptionId = radio.value;
+    confirmBtn.disabled = false;
+    options.querySelectorAll('.modal__choice').forEach(choice => {
+      const input = choice.querySelector('input[name="clarification-option"]');
+      choice.classList.toggle('modal__choice--selected', Boolean(input?.checked));
+    });
+  });
+
+  document.addEventListener('keydown', e => {
+    const modal = document.getElementById('clarification-modal');
+    if (e.key === 'Escape' && !modal.classList.contains('hidden')) {
+      closeClarificationModal();
+    }
+  });
 }
 
 function bindModalCancel() {
@@ -334,4 +424,11 @@ function bindModalCancel() {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function jsonHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'X-Session-Token': state.sessionToken,
+  };
 }

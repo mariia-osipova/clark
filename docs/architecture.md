@@ -22,7 +22,7 @@ Browser
 
 ## Frontend state machine (`frontend/app.js`)
 - Tabs: Catalog | Cart | Chat | future Monthly Buys tab
-- Persistent state in `localStorage`: cart items, session token, chat history
+- Persistent state in `localStorage`: cart items, chat session token, chat history
 - Cart total computed client-side, confirmed by server on each chat response
 
 ## Backend modules
@@ -39,6 +39,7 @@ Browser
 - `chat_agent_agentic.py` caches the compiled LangGraph app and loaded catalog at module scope to avoid rebuilding them on every request.
 - Chat turns run with an explicit `recursion_limit` and a model timeout to prevent runaway loops and hung server threads.
 - Clarification requests halt the graph immediately after tool execution; the frontend resumes the flow by POSTing `clarification_response`.
+- Pending clarifications are stored in ephemeral server memory and resolved by `X-Session-Token` plus `pending_request_id` before the next agent turn.
 
 ## Data directory
 | File | Description |
