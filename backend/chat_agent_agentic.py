@@ -122,6 +122,7 @@ class ShopState(TypedDict):
     # Checkout output
     forgotten_suggestion: dict | None    # {product_id, name, quantity, price, days_ago}
     checkout_result: dict | None         # {order_id, total, item_count} or {error: str}
+    checkout_nudge_shown: bool           # True after nudge fires once — skip on subsequent checkout turns
 
     # User context — loaded from data/user_profile.json, read-only inside graph
     user_profile: dict
@@ -790,11 +791,15 @@ def _build_graph(catalog: list[dict], api_key: str):
     # ── Node: check_forgotten_items ───────────────────────────────────────────
     def check_forgotten_items(state: ShopState, config: RunnableConfig) -> dict:
         """Deterministic. Compares current cart against last order.
-        If an item was bought before but isn't in the cart, populate forgotten_suggestion.
-        Otherwise set forgotten_suggestion=None so execute_checkout fires next.
+        Fires the nudge at most once per session — if checkout_nudge_shown is True,
+        skip straight to execute_checkout.
         """
         from datetime import datetime
         from backend.db import get_last_order
+
+        # Nudge already shown this session — don't repeat it
+        if state.get("checkout_nudge_shown"):
+            return {"forgotten_suggestion": None}
 
         sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
         current_cart = _read_session_cart(sid, catalog)
@@ -825,7 +830,8 @@ def _build_graph(catalog: list[dict], api_key: str):
                 "quantity": forgotten.get("quantity", 1),
                 "price": forgotten.get("price", 0.0),
                 "days_ago": days_ago,
-            }
+            },
+            "checkout_nudge_shown": True,   # mark as shown so it won't repeat
         }
 
     # ── Node: execute_checkout ─────────────────────────────────────────────────
@@ -1167,14 +1173,17 @@ def handle_chat(
         }
 
     # ── Normal turn ────────────────────────────────────────────────────────────
-    # Retrieve last_suggestions from prior state so suggestion_reply can reference them
+    # Retrieve persisted fields from prior state
     prior_suggestions: list[dict] = []
+    prior_nudge_shown: bool = False
     if session_id:
         try:
             prior_state = app.get_state(config)
             prior_suggestions = prior_state.values.get("last_suggestions") or []
+            prior_nudge_shown = bool(prior_state.values.get("checkout_nudge_shown", False))
         except Exception:
             prior_suggestions = []
+            prior_nudge_shown = False
 
     invoke_input: dict = {
         "raw_message": message,
@@ -1189,6 +1198,7 @@ def handle_chat(
         "reply": "",
         "forgotten_suggestion": None,
         "checkout_result": None,
+        "checkout_nudge_shown": prior_nudge_shown,
         "session_id": session_id,
         "initial_cart": initial_cart,
         "history": _trim_history(history),
