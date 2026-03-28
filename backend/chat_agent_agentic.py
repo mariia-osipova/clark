@@ -114,6 +114,7 @@ class ShopState(TypedDict):
 
     # Per-turn output
     missing_items: list[str]
+    suggestions: list[dict]   # [{query, options: list[dict]}] for needs_suggestion items
     pending_clarification: dict | None   # issued to client; persisted in SqliteSaver
     reply: str
 
@@ -126,7 +127,13 @@ def _build_system_prompt() -> str:
 ## REGLA FUNDAMENTAL
 Cuando el usuario menciona cualquier producto o alimento, tu PRIMERA acción debe ser llamar a las herramientas — no respondas con texto primero. Nunca pidas confirmación antes de buscar. Nunca preguntes "¿Te gustaría que busque...?". Simplemente buscá.
 
-## Flujo obligatorio para cada producto mencionado
+## Recetas y platos — REGLA CRÍTICA
+Si el usuario menciona una receta, plato o comida (ejemplos: tiramisu, pizza, tarta de manzana, milanesas, ensalada, risotto), NUNCA busques el nombre del plato como producto. En cambio:
+1. Identificá mentalmente los ingredientes necesarios para esa receta.
+2. Llamá resolve_product por separado para CADA ingrediente (no para el plato).
+Ejemplo correcto para "quiero hacer tiramisu": llamá resolve_product("mascarpone"), resolve_product("huevos"), resolve_product("azúcar"), resolve_product("café"), resolve_product("vainillas"), resolve_product("cacao en polvo"), resolve_product("crema de leche") — uno por uno, nunca resolve_product("tiramisu").
+
+## Flujo obligatorio para cada producto o ingrediente
 1. Llamá resolve_product(query, quantity) de inmediato.
 2. Si devuelve status "resolved" → llamá add_to_cart(product_id, quantity) con los datos del resultado.
 3. Si devuelve status "needs_clarification" → llamá request_clarification con la pregunta y las options exactas devueltas.
@@ -135,7 +142,7 @@ Cuando el usuario menciona cualquier producto o alimento, tu PRIMERA acción deb
 ## Reglas generales
 - NUNCA respondas con texto sin antes haber llamado las herramientas para cada producto pedido.
 - NUNCA preguntes "¿quieres que busque?", "¿te gustaría que...?", ni nada similar. Buscá directamente.
-- Para pedidos con varios productos, resolvé cada ítem por separado con su propia llamada a resolve_product.
+- Para pedidos con varios productos o ingredientes, resolvé cada ítem por separado con su propia llamada a resolve_product.
 - Nunca inventes product_ids; usá únicamente los devueltos por resolve_product.
 - Al terminar, respondé brevemente qué agregaste, qué faltó y qué necesita aclaración.
 - Respondé siempre en español, de forma amable y concisa.
@@ -338,6 +345,28 @@ _CLASSIFY_SYSTEM = (
     "y planned_items=[].\n"
     'Para generar canasta mensual, usá turn_kind=monthly_basket y planned_items=[].\n'
     "Extraé un ítem por producto mencionado. Resolvé números en español (dos→2, tres→3, un→1).\n"
+    "\n"
+    "REGLA RECETAS: Si el mensaje menciona una receta o plato, descomponélo en ingredientes "
+    "individuales con queries específicos orientados al catálogo. NUNCA uses el nombre del plato "
+    "como query.\n"
+    "\n"
+    "Ejemplos:\n"
+    '{"turn_kind":"shopping","planned_items":[{"query":"leche entera","quantity":2},{"query":"yogur","quantity":1}]}\n'
+    "\n"
+    'Receta tiramisu → {"turn_kind":"shopping","planned_items":['
+    '{"query":"queso mascarpone","quantity":1},'
+    '{"query":"cafe instantaneo","quantity":1},'
+    '{"query":"huevos","quantity":1},'
+    '{"query":"azucar","quantity":1},'
+    '{"query":"vainillas","quantity":1},'
+    '{"query":"cacao en polvo","quantity":1},'
+    '{"query":"crema de leche","quantity":1}]}\n'
+    "\n"
+    'Receta pizza → {"turn_kind":"shopping","planned_items":['
+    '{"query":"harina","quantity":1},'
+    '{"query":"queso mozzarella","quantity":1},'
+    '{"query":"salsa de tomate","quantity":1}]}\n'
+    "\n"
     "SOLO JSON, sin markdown ni texto adicional."
 )
 
@@ -387,12 +416,21 @@ def _build_graph(catalog: list[dict], api_key: str):
 
     # ── Node: resolve_items ────────────────────────────────────────────────────
     def resolve_items(state: ShopState) -> dict:
-        """Deterministic: call resolve_product() for each planned item not yet resolved."""
+        """Deterministic: call resolve_product() for each planned item.
+        Resolve-first: processes ALL items before returning.
+        At most one needs_clarification is kept; extras go to missing_items.
+        needs_suggestion items are collected separately so the UI can offer them
+        without blocking the conversation.
+        """
         resolutions = list(state.get("resolutions") or [])
         resolved_cart = list(state.get("resolved_cart") or [])
         missing_items = list(state.get("missing_items") or [])
+        suggestions = list(state.get("suggestions") or [])
 
         already_resolved = {r["query"] for r in resolutions}
+        has_clarification = any(
+            r.get("status") == "needs_clarification" for r in resolutions
+        )
 
         for item in state.get("planned_items") or []:
             query = item["query"]
@@ -410,15 +448,21 @@ def _build_graph(catalog: list[dict], api_key: str):
             }
             resolutions.append(resolution)
 
-            if verdict["status"] == "needs_clarification":
-                # Stop here; emit_clarification will handle this item
-                return {
-                    "resolutions": resolutions,
-                    "resolved_cart": resolved_cart,
-                    "missing_items": missing_items,
-                }
-            elif verdict["status"] == "resolved":
+            if verdict["status"] == "resolved":
                 resolved_cart.append(_build_cart_item(verdict["product"], qty))
+            elif verdict["status"] == "needs_clarification":
+                if has_clarification:
+                    # Already have one clarification pending — defer this to missing
+                    missing_items.append(query)
+                else:
+                    has_clarification = True
+                    # Keep in resolutions (emit_clarification will pick it up)
+            elif verdict["status"] == "needs_suggestion":
+                suggestions.append({
+                    "query": query,
+                    "reason": "not_found",
+                    "options": verdict.get("options", []),
+                })
             elif verdict["status"] == "not_found":
                 missing_items.append(query)
 
@@ -426,6 +470,7 @@ def _build_graph(catalog: list[dict], api_key: str):
             "resolutions": resolutions,
             "resolved_cart": resolved_cart,
             "missing_items": missing_items,
+            "suggestions": suggestions,
         }
 
     # ── Node: apply_cart ───────────────────────────────────────────────────────
@@ -481,6 +526,11 @@ def _build_graph(catalog: list[dict], api_key: str):
         if missing:
             parts.append(f"No encontré: {', '.join(missing)}.")
 
+        suggestions = state.get("suggestions") or []
+        if suggestions:
+            sug_names = ", ".join(s["query"] for s in suggestions)
+            parts.append(f"No tengo exactamente: {sug_names}. Hay opciones similares disponibles.")
+
         facts = " ".join(parts) if parts else state.get("raw_message", "")
 
         system = (
@@ -495,7 +545,10 @@ def _build_graph(catalog: list[dict], api_key: str):
             return {"reply": response.content}
         except Exception:
             # Deterministic fallback
-            return {"reply": " ".join(parts) if parts else "Hola, ¿en qué te puedo ayudar?"}
+            fallback = " ".join(parts) if parts else "Hola, ¿en qué te puedo ayudar?"
+            if added and fallback:
+                fallback += " ¿Está bien así?"
+            return {"reply": fallback}
 
     # ── Routing ────────────────────────────────────────────────────────────────
     def route_after_classify(state: ShopState) -> str:
@@ -504,10 +557,10 @@ def _build_graph(catalog: list[dict], api_key: str):
             return "summarize"
         return "resolve_items"
 
-    def route_after_resolve(state: ShopState) -> str:
+    def route_after_apply(state: ShopState) -> str:
         if any(r.get("status") == "needs_clarification" for r in (state.get("resolutions") or [])):
             return "emit_clarification"
-        return "apply_cart"
+        return "summarize"
 
     # ── Graph wiring ───────────────────────────────────────────────────────────
     graph = StateGraph(ShopState)
@@ -519,8 +572,8 @@ def _build_graph(catalog: list[dict], api_key: str):
 
     graph.add_edge(START, "classify_turn")
     graph.add_conditional_edges("classify_turn", route_after_classify)
-    graph.add_conditional_edges("resolve_items", route_after_resolve)
-    graph.add_edge("apply_cart", "summarize")
+    graph.add_edge("resolve_items", "apply_cart")
+    graph.add_conditional_edges("apply_cart", route_after_apply)
     graph.add_edge("emit_clarification", "summarize")
     graph.add_edge("summarize", END)
 
@@ -712,6 +765,7 @@ def handle_chat(
                         "resolutions": list(resolved_so_far) + [chosen_resolution],
                         "resolved_cart": [],
                         "missing_items": [],
+                        "suggestions": [],
                         "pending_clarification": None,
                         "reply": "",
                         "session_id": session_id,
@@ -725,6 +779,7 @@ def handle_chat(
                         "cart": _read_session_cart(session_id, catalog),
                         "clarification": final_state.get("pending_clarification"),
                         "missing_items": final_state.get("missing_items") or [],
+                        "suggestions": final_state.get("suggestions") or [],
                     }
 
                 return {
@@ -752,6 +807,7 @@ def handle_chat(
         "resolutions": [],
         "resolved_cart": [],
         "missing_items": [],
+        "suggestions": [],
         "pending_clarification": None,
         "reply": "",
         "session_id": session_id,
@@ -774,4 +830,5 @@ def handle_chat(
         "cart": cart_result,
         "clarification": clarification,
         "missing_items": final_state.get("missing_items") or [],
+        "suggestions": final_state.get("suggestions") or [],
     }

@@ -27,6 +27,10 @@ CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
 _MODEL_CACHE: dict = {}   # key "model" → SentenceTransformer instance
 _INDEX_CACHE: dict = {}   # key "entries" → list[{id, embedding}], "path_mtime" → float
 
+# Minimum cosine similarity for a semantic candidate to be considered relevant.
+# Filters out cross-category noise (e.g. "azúcar" returning cleaners).
+_SIMILARITY_FLOOR = 0.45
+
 # Spanish word-to-number map for parse_quantity
 _WORD_TO_NUM: dict[str, int] = {
     "un": 1, "una": 1, "uno": 1,
@@ -70,9 +74,11 @@ def resolve_product(query: str, quantity: int, catalog: list[dict]) -> dict:
     """
     Single-call product resolution: wraps search → clarification detection → alternatives.
 
-    Returns a verdict dict with one of three statuses:
+    Returns a verdict dict with one of four statuses:
       resolved            → {status, product: dict, quantity: int, substituted: bool}
       needs_clarification → {status, options: list[dict], quantity: int}
+      needs_suggestion    → {status, options: list[dict], quantity: int}
+                            (requested item absent/OOS; options are relevant alternatives)
       not_found           → {status, quantity: int}
 
     Eliminates ambiguity judgment and substitute-vs-report decisions from the LLM.
@@ -85,10 +91,9 @@ def resolve_product(query: str, quantity: int, catalog: list[dict]) -> dict:
         if not alternatives:
             return {"status": "not_found", "quantity": quantity}
         return {
-            "status": "resolved",
-            "product": alternatives[0],
+            "status": "needs_suggestion",
+            "options": alternatives[:3],
             "quantity": quantity,
-            "substituted": True,
         }
 
     options = build_clarification_candidates(results)
@@ -110,22 +115,34 @@ def resolve_product(query: str, quantity: int, catalog: list[dict]) -> dict:
 def search(query: str, catalog: list[dict], top_k: int = 10) -> list[dict]:
     """
     Return up to top_k products matching the query, re-ranked by brand/size signals.
-    Uses semantic retrieval before rank_candidates (brand +5, size +5, discount boost).
-    Falls back to keyword filter if the semantic index is not available.
+    Uses hybrid retrieval: semantic candidates merged with keyword matches so that
+    exact-name queries (e.g. "queso mascarpone") are never dropped by the semantic
+    top-k cutoff.  Falls back to keyword-only if the semantic index is not available.
     """
     candidates = _semantic_candidates(query, catalog, top_k * 3)
+    tokens = _tokenize(query)
     if not candidates:
         # Fallback: keyword filter that works without a semantic index
-        tokens = _tokenize(query)
         candidates = [
             p for p in catalog
             if p.get("available_quantity", 1) != 0 and _keyword_score(tokens, p) > 0
         ]
         return rank_candidates(candidates, query)[:top_k]
 
-    # Semantic candidates: re-rank by keyword/brand/size signals.
+    # Hybrid: inject any keyword matches that the semantic top-k missed.
+    # rank_candidates will score them correctly; semantic-only results still compete.
+    seen = {p["id"] for p in candidates}
+    keyword_extras = [
+        p for p in catalog
+        if p.get("available_quantity", 1) != 0
+        and p["id"] not in seen
+        and _keyword_score(tokens, p) > 0
+    ]
+    merged = candidates + keyword_extras
+
+    # Re-rank by keyword/brand/size signals.
     # If none score above zero (broad query like "para el desayuno"), preserve semantic order.
-    reranked = rank_candidates(candidates, query)
+    reranked = rank_candidates(merged, query)
     return (reranked if reranked else candidates)[:top_k]
 
 
@@ -149,11 +166,11 @@ def rank_candidates(candidates: list[dict], query: str) -> list[dict]:
             # promotes irrelevant items above actual matches.
             discount_pct = p.get("discount_pct", 0)
             if discount_pct >= 40:
-                score += 4.0    # Strong offer — near brand-match weight
+                score += 0.4    # Strong offer tiebreaker — must not override keyword relevance
             elif discount_pct >= 20:
-                score += 2.0    # Meaningful discount
+                score += 0.2    # Meaningful discount tiebreaker
             elif discount_pct >= 10:
-                score += 1.0    # Mild discount — equal to one keyword match
+                score += 0.1    # Mild discount tiebreaker
             scored.append((score, p))
     scored.sort(key=lambda x: -x[0])
     return [p for _, p in scored]
@@ -183,11 +200,10 @@ def find_alternatives(
         tokens = _tokenize(query)
         candidates = [p for p in pool if _keyword_score(tokens, p) > 0]
         if not candidates:
-            # Last resort: return anything in-stock from pool, skip re-ranking
-            print(f"[find_alternatives] no matches for {query!r} — returning unranked pool fallback")
-            return pool[:top_k]
+            return []
 
-    return rank_candidates(candidates, query)[:top_k]
+    ranked = rank_candidates(candidates, query)
+    return ranked[:top_k] if ranked else []
 
 
 def build_clarification_candidates(
@@ -515,6 +531,7 @@ def _semantic_candidates(query: str, catalog: list[dict], top_k: int) -> list[di
         scored.append((sim, id_to_product[pid]))
 
     scored.sort(key=lambda x: -x[0])
+    scored = [(s, p) for s, p in scored if s >= _SIMILARITY_FLOOR]
     return [p for _, p in scored[:top_k]]
 
 

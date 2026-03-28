@@ -114,6 +114,30 @@ class TestSearch:
         ids = [p["id"] for p in results]
         assert "p5" in ids
 
+    def test_no_noise_for_specific_query(self):
+        """Exact-name query must return the matching product, not unrelated ones."""
+        # p5 is "Yogur Entero Danone" — the only yogur in CATALOG
+        # It must appear in search results for "yogur danone"
+        import backend.product_semantic_index as mod
+        import importlib
+        # Force keyword-only path
+        orig_path = mod.INDEX_PATH
+        mod.INDEX_PATH = mod.ROOT / "data" / "nonexistent_noise_test.json"
+        mod._INDEX_CACHE = {}
+        try:
+            results = search("yogur danone", CATALOG)
+            ids = [p["id"] for p in results]
+            assert "p5" in ids, f"p5 (Yogur Danone) must appear in search results, got {ids}"
+            # Ensure no completely unrelated results (no product without 'yogur' or 'danone')
+            for p in results:
+                searchable = (p.get("name","") + " " + p.get("brand","") + " " + p.get("category","")).lower()
+                assert "yogur" in searchable or "danone" in searchable, (
+                    f"Unrelated product in results: {p['name']}"
+                )
+        finally:
+            mod.INDEX_PATH = orig_path
+            mod._INDEX_CACHE = {}
+
 
 # ─── rank_candidates() ───────────────────────────────────────────────────────
 
@@ -183,8 +207,9 @@ class TestSearchSemanticFallback:
 
     def test_semantic_search_broad_query(self, tmp_path, monkeypatch):
         """
-        With a live semantic index, a broad query like 'para el desayuno' should
-        return at least one dairy/breakfast product.
+        With a live semantic index, a specific product query must return the
+        matching product. Broad conceptual queries may return 0 results on a
+        5-product catalog due to the similarity floor — that is intentional.
         Skipped if sentence-transformers is not installed.
         """
         st = pytest.importorskip("sentence_transformers")
@@ -198,8 +223,10 @@ class TestSearchSemanticFallback:
 
         build_index(CATALOG)
         assert index_file.exists(), "build_index() must write the index file"
-        results = search("para el desayuno", CATALOG)
-        assert len(results) >= 1, "Broad query should return at least one result via semantic search"
+        # A direct product name query must find the product via semantic search
+        results = search("yogur entero danone", CATALOG)
+        ids = [p["id"] for p in results]
+        assert "p5" in ids, "Direct product query must find the product via semantic search"
 
 
 # ─── find_alternatives() ─────────────────────────────────────────────────────
@@ -221,11 +248,12 @@ class TestFindAlternatives:
         for p in results:
             assert p["category"] == "Lácteos", f"Expected Lácteos, got {p['category']}"
 
-    def test_falls_back_cross_category(self):
-        """If same-category pool is empty, return results from the full catalog."""
+    def test_no_fallback_when_no_match(self):
+        """When neither category nor full catalog has a keyword/semantic match,
+        find_alternatives returns [] instead of arbitrary unrelated products."""
         results = find_alternatives("algo", CATALOG, category="Bebidas Alcohólicas")
-        # No products in 'Bebidas Alcohólicas' in CATALOG, so should fall back
-        assert len(results) >= 1, "Should return cross-category fallback results"
+        # "algo" has no keyword overlap with any product in CATALOG
+        assert results == [], "Should return [] when there is no relevant match"
 
     def test_returns_only_in_stock(self):
         """Result list must only contain products with available_quantity > 0."""
@@ -262,7 +290,7 @@ class TestOffersRanking:
         )
 
     def test_brand_plus_discount_ranks_highest(self):
-        """Brand match (5.0) + 40% discount (4.0) = 9.0 should beat brand-only (5.0)."""
+        """Brand match (5.0) + 40% discount tiebreaker (0.4) = 5.4 should beat brand-only (5.0)."""
         brand_only = _product("b1", "Leche Entera SanCor", "SanCor", "1L",
                                price=100.0, discount_pct=0.0)
         brand_deal = _product("b2", "Leche Entera SanCor", "SanCor", "1L",
@@ -415,17 +443,18 @@ class TestResolveProduct:
         assert result["status"] == "not_found"
         assert result["quantity"] == 1
 
-    def test_substituted_when_search_empty(self, monkeypatch):
-        """No keyword match → find_alternatives picks something → substituted=True."""
+    def test_needs_suggestion_when_search_empty(self, monkeypatch):
+        """No keyword match → find_alternatives → needs_suggestion with options."""
         import backend.product_semantic_index as mod
         monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
-        # "vino tinto malbec" has no keyword overlap with CATALOG
-        # find_alternatives last-resort fallback returns in-stock items
+        # "vino tinto malbec" has no keyword overlap with CATALOG, and
+        # find_alternatives with no semantic index and no keyword match returns []
         result = resolve_product("vino tinto malbec", 1, CATALOG)
-        assert result["status"] == "resolved"
-        assert result["substituted"] is True
-        assert result["product"] is not None
+        # With no semantic index and no keyword overlap, find_alternatives returns []
+        # so the verdict is not_found
+        assert result["status"] == "not_found"
+        assert result["quantity"] == 1
 
     def test_verdict_contains_quantity(self, monkeypatch):
         """quantity is always echoed back in the verdict."""
@@ -434,6 +463,29 @@ class TestResolveProduct:
         monkeypatch.setattr(mod, "_INDEX_CACHE", {})
         result = resolve_product("yogur danone", 5, CATALOG)
         assert result["quantity"] == 5
+
+    def test_needs_suggestion_when_oos(self, monkeypatch):
+        """OOS item with in-stock alternatives → needs_suggestion with options.
+        Uses a catalog where the only exact match is OOS and alternatives exist."""
+        import backend.product_semantic_index as mod
+        monkeypatch.setattr(mod, "INDEX_PATH", mod.ROOT / "data" / "nonexistent.json")
+        monkeypatch.setattr(mod, "_INDEX_CACHE", {})
+        # Isolated catalog: only one product matches "mascarpone" and it's OOS;
+        # there are in-stock alternatives in the same category.
+        isolated = [
+            _product("m1", "Queso mascarpone Gourmet", "Gourmet", "250g",
+                     available_quantity=0, category="Quesos"),
+            _product("m2", "Queso crema clásico", "Casancrem", "290g",
+                     available_quantity=10, category="Quesos"),
+            _product("m3", "Queso untable light", "Finlandia", "290g",
+                     available_quantity=10, category="Quesos"),
+        ]
+        result = resolve_product("mascarpone", 1, isolated)
+        assert result["status"] == "needs_suggestion"
+        assert len(result["options"]) >= 1
+        assert result["quantity"] == 1
+        for opt in result["options"]:
+            assert opt.get("available_quantity", 1) > 0
 
 
 # ─── generate_monthly_basket_candidates() ────────────────────────────────────
