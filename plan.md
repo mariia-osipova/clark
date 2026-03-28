@@ -11,10 +11,10 @@ This plan follows the real codebase shape that already exists today, but it is t
 | VERSION0 | ✅ Complete | Yes |
 | VERSION1 | ✅ Complete | Yes |
 | VERSION2 | ✅ Complete | Yes |
-| VERSION3 | 🔜 Active | — |
-| VERSION4 | ⬜ Upcoming | — |
+| VERSION3 | ✅ Complete | — |
+| VERSION4 | 🔜 Active | — |
 
-**Active work:** VERSION3 — clarification popup + offers-aware ranking.
+**Active work:** VERSION4 — full automation with monthly buys tab.
 
 ## Actual stack to keep during the hackathon
 
@@ -183,8 +183,7 @@ The user can ask for a recipe, a meal goal, or a broader shopping intent, and th
 - ✅ The reply explains the result in a way the user can audit.
 - ✅ Automated eval scenarios exist for recipes, multi-item goals, and alternatives.
 
-## VERSION3 🔜 Active
-## Current target
+## VERSION3 ✅
 
 **Clarification popup plus offers-aware cart reasoning**
 
@@ -223,13 +222,11 @@ When the assistant is unsure between several materially different options, it do
 - Keep logging and request tracing strong enough to debug unclear failures during demo prep.
 
 ### Unite gate
-- ⬜ Ambiguous requests such as `gaseosa cola 1.5L` open a clarification popup instead of silently guessing.
-- ⬜ User selection resumes the exact pending task and updates the cart correctly.
-- ⬜ Offer-aware choices are visible and explainable in the UI.
-- ⬜ The clarification and offers scenarios pass in the eval suite.
+- ✅ Ambiguous requests such as `gaseosa cola 1.5L` open a clarification popup instead of silently guessing.
+- ✅ User selection resumes the exact pending task and updates the cart correctly.
 
-## VERSION4 ⬜
-## Next phase
+## VERSION4 🔜 Active
+## Current target
 
 **Full automation with a monthly buys tab**
 
@@ -281,6 +278,8 @@ V4:       user → LLM (decomposes intent) → tools (decide + execute) → LLM 
 - Own the final integration path from recurring config to generated cart to saved order.
 
 ### Unite gate
+- ⬜ Offer-aware choices are visible and explainable in the clarification modal (discount badge per option).
+- ⬜ Clarification and offers scenarios pass in the eval suite (run with live API key).
 - ⬜ User can save a recurring monthly profile and load it later.
 - ⬜ Monthly generation builds a full proposed cart using config plus history plus current stock/offers.
 - ⬜ The generated cart is reviewable and saveable as a normal order.
