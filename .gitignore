@@ -1,8 +1,33 @@
+# Environment
 .env
+
+# Data (generated at runtime)
 data/proxy_store.db
 data/catalog_snapshot.json
 data/product_semantic_index.json
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo

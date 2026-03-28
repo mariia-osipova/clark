@@ -5,6 +5,9 @@ Owner: Nacho
 Tables (V0):
     users    — registered users
     sessions — session tokens linked to users
+
+Tables (V1):
+    orders   — placed orders with cart snapshot and total
 """
 
 import os
@@ -44,6 +47,13 @@ def init_db() -> None:
             token      TEXT    NOT NULL UNIQUE,
             created_at TEXT    NOT NULL DEFAULT (datetime('now')),
             expires_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS orders (
+            id         TEXT PRIMARY KEY,
+            cart_json  TEXT NOT NULL,
+            total      REAL NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """)
     conn.commit()

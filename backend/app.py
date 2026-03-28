@@ -19,6 +19,37 @@ ROOT = Path(__file__).resolve().parent.parent
 CATALOG_PATH = ROOT / "data" / "catalog_snapshot.json"
 
 
+def _load_catalog() -> list:
+    if not CATALOG_PATH.exists():
+        return []
+    with open(CATALOG_PATH) as f:
+        return json.load(f)
+
+
+def _validate_order_cart(cart: list, catalog: list) -> list:
+    """Validate cart items against catalog: drop unknowns and out-of-stock, enforce catalog prices."""
+    catalog_map = {p["id"]: p for p in catalog}
+    validated = []
+    for item in cart:
+        pid = item.get("product_id")
+        product = catalog_map.get(pid)
+        if not product:
+            continue
+        if product.get("available_quantity", 0) == 0:
+            continue
+        qty = max(1, int(item.get("quantity", 1)))
+        validated.append({
+            "product_id": pid,
+            "name": product.get("name", ""),
+            "brand": product.get("brand", ""),
+            "package_size": product.get("package_size", ""),
+            "price": product.get("price", 0.0),
+            "quantity": qty,
+            "image_url": product.get("image_url", ""),
+        })
+    return validated
+
+
 def envelope(data=None, error=None, request_id=None):
     return {
         "ok": error is None,
@@ -117,15 +148,46 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_json(envelope(error="Not implemented yet"), 501)
 
     def _handle_orders_get(self):
-        # TODO (Nacho): return order history from SQLite
-        self.send_json(envelope(data={"orders": []}))
+        try:
+            conn = get_db()
+            try:
+                rows = conn.execute(
+                    "SELECT id, cart_json, total, created_at FROM orders ORDER BY created_at DESC"
+                ).fetchall()
+            finally:
+                conn.close()
+            orders = [
+                {
+                    "id": r["id"],
+                    "items": json.loads(r["cart_json"]),
+                    "total": r["total"],
+                    "created_at": r["created_at"],
+                }
+                for r in rows
+            ]
+            self.send_json(envelope(data={"orders": orders}))
+        except Exception as e:
+            self.send_json(envelope(error=str(e)), 500)
 
     def _handle_orders_post(self, body: dict):
-        # TODO (Nacho): persist order to SQLite
-        order_id = str(uuid.uuid4())[:8]
-        cart = body.get("cart", [])
-        total = sum(i.get("price", 0) * i.get("quantity", 1) for i in cart)
-        self.send_json(envelope(data={"order_id": order_id, "total": round(total, 2)}))
+        try:
+            catalog = _load_catalog()
+            cart = body.get("cart", [])
+            validated = _validate_order_cart(cart, catalog)
+            total = round(sum(i["price"] * i["quantity"] for i in validated), 2)
+            order_id = str(uuid.uuid4())[:8]
+            conn = get_db()
+            try:
+                conn.execute(
+                    "INSERT INTO orders (id, cart_json, total) VALUES (?, ?, ?)",
+                    (order_id, json.dumps(validated), total),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.send_json(envelope(data={"order_id": order_id, "total": total}))
+        except Exception as e:
+            self.send_json(envelope(error=str(e)), 500)
 
     def _serve_static(self, path: str):
         if path == "/" or path == "":
