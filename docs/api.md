@@ -49,6 +49,7 @@ Send a chat message. Returns assistant reply, authoritative cart state, clarific
     { "role": "user|assistant", "content": "string" }
   ],
   "cart": [],
+  "action": "generate_monthly_basket",
   "clarification_response": {
     "pending_request_id": "string",
     "chosen_option_id": "string"
@@ -57,6 +58,7 @@ Send a chat message. Returns assistant reply, authoritative cart state, clarific
 ```
 
 `clarification_response` is optional and should only be sent when the user is answering a previously returned clarification prompt. When it is sent, `X-Session-Token` must match the session that received the original clarification.
+`action` is optional. `generate_monthly_basket` bypasses the normal chat graph and returns a deterministic proposal built from the recurring plan plus order history.
 
 **Response `data`:**
 ```json
@@ -102,6 +104,7 @@ Notes:
 - Clarification continuity is server-validated by `X-Session-Token` plus `pending_request_id`; stale or foreign selections return `400`.
 - `missing_items` contains normalized ingredient/product names the agent could not find while decomposing a recipe or broad shopping goal.
 - Server-side history is trimmed by character budget before calling the model; clients can still send full local history.
+- When `action` is `generate_monthly_basket`, the response may also include `proposed_cart` and `cart` stays `null`.
 
 ---
 
@@ -199,7 +202,7 @@ Save or replace the recurring plan configuration.
 ## POST /api/v1/recurring-plan/generate
 
 Generate a proposed monthly cart from saved config + order history + current catalog.
-Calls `generate_monthly_basket_candidates()` from `product_semantic_index.py`; falls back to a rule-based stub if that function is not yet available.
+Calls `generate_monthly_basket_candidates()` from `product_semantic_index.py`.
 
 **Response data:**
 ```json

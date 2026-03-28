@@ -7,9 +7,7 @@ You are assisting Jeremias. His focus is the AI agent behavior, prompt strategy,
 - `backend/chat_agent_agentic.py` — main agentic shopping flow
 - Any prompt templates or system message definitions
 
-## Current version: VERSION3 active
-
-## Current version: VERSION3 ✅ → VERSION4 upcoming
+## Current version: VERSION4 active
 
 ## Current focus (V3 complete)
 - [x] Tighten clarification generation and continuation logic in `backend/chat_agent_agentic.py`
@@ -17,10 +15,10 @@ You are assisting Jeremias. His focus is the AI agent behavior, prompt strategy,
 - [x] Balance user intent with offer-aware ranking without making overly aggressive substitutions
 
 ## V4 focus
-- [ ] Swap `search_products` tool for `resolve_product` + `add_to_cart` in the agent graph once Juan and Nacho deliver those tools. Agent calls `resolve_product()` and routes on verdict, never decides product ambiguity itself.
-- [ ] Simplify system prompt to ~4 routing rules: if `resolved` → `add_to_cart`; if `needs_clarification` → `request_clarification`; if `not_found` → report missing.
-- [ ] Add monthly basket graph node: calls `POST /api/v1/recurring-plan/generate`, presents result to user, handles overrides.
-- [ ] Make recurring generation reproducible enough that the team can review and trust the output live.
+- [x] Swap `search_products` / `set_cart` for `resolve_product` + `add_to_cart` in the agent graph. The agent now routes on tool verdicts instead of deciding ambiguity itself.
+- [x] Simplify the system prompt to routing rules only: `resolved` → `add_to_cart`, `needs_clarification` → `request_clarification`, `not_found` → `report_missing`.
+- [x] Add the monthly basket action path in `handle_chat()`: short-circuits the LangGraph loop, builds a deterministic proposed cart, and returns it for review.
+- [x] Keep recurring generation reproducible enough for live demo review by delegating basket construction to `generate_monthly_basket_candidates()`.
 
 ## How to help Jeremias
 - When he describes a behavior or prompt change, implement it in `chat_agent_agentic.py`.

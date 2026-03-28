@@ -2,6 +2,14 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Jeremias — VERSION4 agent layer consolidated
+
+**Type:** feature
+
+Consolidated the V4 agent flow in `backend/chat_agent_agentic.py`: the graph now routes through `resolve_product` and `add_to_cart`, session-backed cart writes replace full-cart mutations, and `action="generate_monthly_basket"` returns a deterministic `proposed_cart` without invoking the LangGraph loop. Verified against the full test suite (`198 passed, 1 skipped`) and updated the repo/team docs to reflect VERSION4 as the active target.
+
+---
+
 ## 2026-03-28 — Nacho — VERSION4: session carts + recurring plan persistence + generate/accept flow
 
 **Type:** feature

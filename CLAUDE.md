@@ -2,7 +2,7 @@
 
 ## Project
 AI-powered shopping assistant. See [plan.md](plan.md) for the current execution plan.
-Current target: **VERSION3** — clarification popup plus offers-aware cart reasoning.
+Current target: **VERSION4** — deterministic tool routing plus recurring monthly basket automation.
 
 ## Team identity
 When a team member introduces themselves, read their file immediately before doing anything else:
