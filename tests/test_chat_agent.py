@@ -20,6 +20,8 @@ sys.path.insert(0, str(ROOT))
 
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-key")
 
+from langchain_core.messages import AIMessage as LCAIMessage
+
 from backend.chat_agent_agentic import (
     _build_system_prompt,
     _catalog_summary,
@@ -315,3 +317,112 @@ class TestHandleChat:
         assert "reply" in result
         assert "cart" in result
         assert "clarification" in result
+
+
+class TestAgenticLoop:
+    """
+    Integration tests for the LangGraph graph topology.
+    Mocks ChatOpenAI so the real graph (nodes + edges + tool execution) runs.
+    """
+
+    def _ai_with_tool_call(self, tool_name, tool_args, call_id="call_1"):
+        """AIMessage that triggers a tool call."""
+        return LCAIMessage(
+            content="",
+            tool_calls=[{"name": tool_name, "args": tool_args, "id": call_id, "type": "tool_call"}],
+        )
+
+    def _ai_reply(self, text):
+        """Final AIMessage with no tool calls."""
+        return LCAIMessage(content=text)
+
+    @patch("backend.product_semantic_index.search")
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_search_then_set_cart_then_reply(
+        self, mock_load_catalog, mock_llm_cls, mock_search, sample_catalog
+    ):
+        """Full happy path through the real graph: search → set_cart → reply."""
+        mock_load_catalog.return_value = sample_catalog
+        mock_search.return_value = [sample_catalog[0]]  # returns leche
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.side_effect = [
+            self._ai_with_tool_call("search_products", {"query": "leche entera 1L"}, "c1"),
+            self._ai_with_tool_call("set_cart", {"items": [{"product_id": "p1", "quantity": 1}]}, "c2"),
+            self._ai_reply("Agregué Leche entera La Serenísima 1L. $350.00"),
+        ]
+        mock_llm_cls.return_value = llm
+
+        result = handle_chat("quiero leche entera 1L", [], [])
+
+        assert llm.invoke.call_count == 3
+        assert result["cart"] is not None
+        assert result["cart"][0]["product_id"] == "p1"
+        assert "leche" in result["reply"].lower()
+
+    @patch("backend.product_semantic_index.search")
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_tool_message_injected_after_search(
+        self, mock_load_catalog, mock_llm_cls, mock_search, sample_catalog
+    ):
+        """After search_products, the second LLM call must receive a ToolMessage."""
+        mock_load_catalog.return_value = sample_catalog
+        mock_search.return_value = [sample_catalog[0]]
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.side_effect = [
+            self._ai_with_tool_call("search_products", {"query": "leche"}, "c1"),
+            self._ai_reply("ok"),
+        ]
+        mock_llm_cls.return_value = llm
+
+        handle_chat("quiero leche", [], [])
+
+        second_call_messages = llm.invoke.call_args_list[1][0][0]
+        from langchain_core.messages import ToolMessage
+        tool_msgs = [m for m in second_call_messages if isinstance(m, ToolMessage)]
+        assert len(tool_msgs) >= 1
+
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_plain_reply_one_llm_call(self, mock_load_catalog, mock_llm_cls, sample_catalog):
+        """Conversational message with no tool calls resolves in one LLM call."""
+        mock_load_catalog.return_value = sample_catalog
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.return_value = self._ai_reply("Hola, ¿en qué te puedo ayudar?")
+        mock_llm_cls.return_value = llm
+
+        result = handle_chat("hola", [], [])
+
+        assert llm.invoke.call_count == 1
+        assert result["reply"] == "Hola, ¿en qué te puedo ayudar?"
+        assert result["cart"] is None
+
+    @patch("backend.product_semantic_index.search")
+    @patch("backend.chat_agent_agentic.ChatOpenAI")
+    @patch("backend.chat_agent_agentic._load_catalog")
+    def test_out_of_stock_removed_from_cart(
+        self, mock_load_catalog, mock_llm_cls, mock_search, sample_catalog
+    ):
+        """set_cart with an out-of-stock product returns empty validated cart."""
+        mock_load_catalog.return_value = sample_catalog
+        mock_search.return_value = [sample_catalog[2]]  # p3 = out of stock
+
+        llm = MagicMock()
+        llm.bind_tools.return_value = llm
+        llm.invoke.side_effect = [
+            self._ai_with_tool_call("set_cart", {"items": [{"product_id": "p3", "quantity": 1}]}, "c1"),
+            self._ai_reply("Lo siento, ese producto no está disponible."),
+        ]
+        mock_llm_cls.return_value = llm
+
+        result = handle_chat("quiero pan lactal", [], [])
+
+        assert result["cart"] is not None
+        assert all(i["product_id"] != "p3" for i in result["cart"])
