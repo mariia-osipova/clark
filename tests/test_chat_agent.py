@@ -91,25 +91,23 @@ def _make_openai_response(content=None, tool_name=None, tool_args=None):
 
 class TestSystemPrompt:
     def test_prompt_is_in_spanish(self):
-        prompt = _build_system_prompt("resumen del catálogo")
-        # Core Spanish words that must appear
+        prompt = _build_system_prompt()
         assert "español" in prompt.lower() or "asistente" in prompt.lower()
 
-    def test_prompt_contains_catalog_summary(self):
-        summary = "- [p1] Leche entera $350.00"
-        prompt = _build_system_prompt(summary)
-        assert summary in prompt
+    def test_prompt_instructs_search_before_add(self):
+        prompt = _build_system_prompt()
+        assert "search_products" in prompt
 
     def test_prompt_instructs_not_to_hallucinate(self):
-        prompt = _build_system_prompt("")
+        prompt = _build_system_prompt()
         assert "catálogo" in prompt.lower()
 
     def test_prompt_mentions_cart_tool(self):
-        prompt = _build_system_prompt("")
+        prompt = _build_system_prompt()
         assert "set_cart" in prompt
 
     def test_prompt_mentions_spanish_awareness(self):
-        prompt = _build_system_prompt("")
+        prompt = _build_system_prompt()
         assert "español" in prompt.lower()
 
 
