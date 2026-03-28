@@ -229,9 +229,29 @@ function loadSessionToken() {
 function bindChat() {
   const input = document.getElementById('chat-input');
   const btn = document.getElementById('btn-send');
+  const newChatBtn = document.getElementById('btn-new-chat');
 
   btn.addEventListener('click', sendChat);
   input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+  newChatBtn.addEventListener('click', startNewChat);
+}
+
+function startNewChat() {
+  // Generate a fresh session token so the backend starts with no history
+  const fresh = window.crypto?.randomUUID?.() || `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  localStorage.setItem('chatSessionToken', fresh);
+  state.sessionToken = fresh;
+  state.chatHistory = [];
+  state.clarification = null;
+
+  // Clear the chat thread UI, leaving only the empty state
+  const thread = document.getElementById('chat-thread');
+  const empty = document.getElementById('chat-empty');
+  thread.innerHTML = '';
+  thread.appendChild(empty);
+  empty.classList.remove('hidden');
+
+  document.getElementById('clarification-modal').classList.add('hidden');
 }
 
 async function sendChat() {
