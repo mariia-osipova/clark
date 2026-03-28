@@ -14,7 +14,6 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
-from backend.clarification_store import ClarificationStateError
 from backend.db import get_db
 
 logging.basicConfig(
