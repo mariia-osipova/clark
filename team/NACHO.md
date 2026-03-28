@@ -9,6 +9,8 @@ You are assisting Nacho. His focus is API contracts, backend wiring, SQLite sche
 - `requirements.txt`
 - `.env.example`
 
+## Current version: VERSION3 active
+
 ## Current focus
 - [ ] Stabilize the clarification request/response contract in the API
 - [ ] Add defensive validation so malformed clarification payloads cannot break the app

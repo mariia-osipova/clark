@@ -2,6 +2,14 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Juan — VERSION3 started: V2 merged, advancing to clarification popup + offers-aware ranking
+
+**Type:** version
+
+V2 is complete and merged to main. All V2 unite gate items pass. Advancing to VERSION3: clarification popup end-to-end + offers-aware cart reasoning. Critical path: Jeremias implements ambiguity detection and continuation → Juan defines clarification candidate sets and extends discount weight in ranking → Mariia renders option cards → Nacho validates clarification payload contract.
+
+---
+
 ## 2026-03-28 — Juan — V2 bug fixes: cosine similarity, eval harness robustness
 
 **Type:** decision
