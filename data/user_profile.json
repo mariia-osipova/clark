@@ -1,0 +1,36 @@
+{
+  "_schema_version": 1,
+  "_doc": "Single hardcoded demo user profile. Consumed by graph nodes and tools.",
+
+  "identity": {
+    "name": "",
+    "locale": "es-AR"
+  },
+
+  "household": {
+    "size": 1,
+    "has_children": false,
+    "has_pets": false,
+    "dietary_restrictions": []
+  },
+
+  "preferences": {
+    "preferred_brands": {},
+    "excluded_brands": [],
+    "excluded_categories": [],
+    "budget_monthly": null,
+    "strict_brand": false
+  },
+
+  "purchase_history": {
+    "frequent_items": [],
+    "last_order_date": null,
+    "avg_cart_size": null,
+    "shopping_frequency_days": null
+  },
+
+  "interaction": {
+    "auto_pick_suggestions": false,
+    "verbosity": "normal"
+  }
+}

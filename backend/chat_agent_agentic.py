@@ -115,8 +115,12 @@ class ShopState(TypedDict):
     # Per-turn output
     missing_items: list[str]
     suggestions: list[dict]   # [{query, options: list[dict]}] for needs_suggestion items
+    last_suggestions: list[dict]  # persisted across turns so suggestion_reply can reference them
     pending_clarification: dict | None   # issued to client; persisted in SqliteSaver
     reply: str
+
+    # User context — loaded from data/user_profile.json, read-only inside graph
+    user_profile: dict
 
 
 # ─── Prompt ───────────────────────────────────────────────────────────────────
@@ -369,11 +373,19 @@ def _read_session_cart(session_id: str, catalog: list[dict]) -> list[dict]:
 
 _CLASSIFY_SYSTEM = (
     "Sos un asistente de compras. Analizá el mensaje del usuario y respondé SOLO con JSON:\n"
-    '{"turn_kind": "shopping|smalltalk|monthly_basket", '
+    '{"turn_kind": "shopping|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection", '
     '"planned_items": [{"query": "nombre producto", "quantity": 1}]}\n'
     "Para mensajes que NO son compras (saludos, preguntas generales), usá turn_kind=smalltalk "
     "y planned_items=[].\n"
     'Para generar canasta mensual, usá turn_kind=monthly_basket y planned_items=[].\n'
+    "REGLA SUGERENCIAS: Si el último mensaje del asistente ofreció alternativas o sugerencias "
+    "para un producto que no se encontró:\n"
+    "- Si el usuario ACEPTA (sí, dale, ok, quiero la primera, agregá esa, etc.) o elige una opción "
+    "específica → turn_kind=suggestion_reply. Si dice solo 'sí'/'dale' sin especificar cuál, "
+    "planned_items=[] (se agregará la mejor opción automáticamente).\n"
+    "- Si el usuario RECHAZA las sugerencias o dice que no son lo que buscaba ('eso no es X', "
+    "'no quiero eso', 'no, busco otra cosa', 'eso no es lo que pedí') → turn_kind=suggestion_rejection "
+    "y planned_items=[].\n"
     "Extraé un ítem por producto mencionado. Resolvé números en español (dos→2, tres→3, un→1).\n"
     "\n"
     "REGLA RECETAS: Si el mensaje menciona una receta o plato, descomponélo en ingredientes "
@@ -397,6 +409,14 @@ _CLASSIFY_SYSTEM = (
     '{"query":"queso mozzarella","quantity":1},'
     '{"query":"salsa de tomate","quantity":1}]}\n'
     "\n"
+    "Sugerencia aceptada genérica → "
+    '{"turn_kind":"suggestion_reply","planned_items":[]}\n'
+    "\n"
+    'Sugerencia con elección → {"turn_kind":"suggestion_reply","planned_items":[{"query":"helado de chocolate","quantity":1}]}\n'
+    "\n"
+    '"eso no es helado" / "no, busco otra cosa" → '
+    '{"turn_kind":"suggestion_rejection","planned_items":[]}\n'
+    "\n"
     "SOLO JSON, sin markdown ni texto adicional."
 )
 
@@ -415,8 +435,8 @@ def _build_graph(catalog: list[dict], api_key: str):
     # ── Node: classify_turn ────────────────────────────────────────────────────
     def classify_turn(state: ShopState) -> dict:
         """LLM classifies intent and extracts planned items in one structured call."""
-        if state.get("turn_kind") == "clarification_reply":
-            return {}  # pre-set by handle_chat; skip re-classification
+        if state.get("turn_kind") in ("clarification_reply", "suggestion_reply", "suggestion_rejection"):
+            return {}  # pre-set; skip re-classification
 
         raw = state.get("raw_message", "")
         history = state.get("history") or []
@@ -448,6 +468,44 @@ def _build_graph(catalog: list[dict], api_key: str):
             _log.exception("classify_turn failed, defaulting to smalltalk")
             return {"turn_kind": "smalltalk", "planned_items": []}
 
+    # ── Profile helpers ────────────────────────────────────────────────────────
+    def _build_profile_constraints(profile: dict) -> dict:
+        """Translate user_profile preferences into the constraint shape used by
+        extract_constraints / _apply_hard_constraints.
+
+        Only brand is applied here (the most common preference). Dietary
+        restrictions expressed as qualifiers are appended if no query-level
+        qualifier was already found.
+        """
+        prefs = profile.get("preferences", {})
+        household = profile.get("household", {})
+
+        # Preferred brand: use if exactly one brand is preferred and strict_brand is set
+        brand: str | None = None
+        if prefs.get("strict_brand"):
+            preferred = prefs.get("preferred_brands", {})
+            if len(preferred) == 1:
+                brand = next(iter(preferred))
+
+        # Dietary restrictions → qualifier tokens (intersect with known qualifiers)
+        from backend.product_semantic_index import _QUALIFIER_TOKENS  # type: ignore[attr-defined]
+        restrictions = household.get("dietary_restrictions", [])
+        qualifiers = [r for r in restrictions if r in _QUALIFIER_TOKENS]
+
+        return {"brand": brand, "size": None, "qualifiers": qualifiers}
+
+    def _merge_constraints(query_constraints: dict, profile_constraints: dict) -> dict:
+        """Merge profile constraints into query constraints.
+        Query-level values take precedence (user's explicit request wins).
+        """
+        merged = dict(query_constraints)
+        if not merged.get("brand") and profile_constraints.get("brand"):
+            merged["brand"] = profile_constraints["brand"]
+        profile_quals = profile_constraints.get("qualifiers", [])
+        existing_quals = merged.get("qualifiers", [])
+        merged["qualifiers"] = existing_quals + [q for q in profile_quals if q not in existing_quals]
+        return merged
+
     # ── Node: resolve_items ────────────────────────────────────────────────────
     def resolve_items(state: ShopState) -> dict:
         """Deterministic: call resolve_product() for each planned item.
@@ -466,13 +524,19 @@ def _build_graph(catalog: list[dict], api_key: str):
             r.get("status") == "needs_clarification" for r in resolutions
         )
 
+        profile = state.get("user_profile") or {}
+        profile_constraints = _build_profile_constraints(profile)
+
         for item in state.get("planned_items") or []:
             query = item["query"]
             if query in already_resolved:
                 continue
             qty = item.get("quantity", 1)
 
-            verdict = _resolve_product(query, qty, catalog)
+            from backend.product_semantic_index import extract_constraints as _extract_constraints
+            query_constraints = _extract_constraints(query, catalog)
+            merged = _merge_constraints(query_constraints, profile_constraints)
+            verdict = _resolve_product(query, qty, catalog, constraints=merged)
             resolution = {
                 "query": query,
                 "status": verdict["status"],
@@ -505,6 +569,81 @@ def _build_graph(catalog: list[dict], api_key: str):
             "resolved_cart": resolved_cart,
             "missing_items": missing_items,
             "suggestions": suggestions,
+        }
+
+    # ── Node: accept_suggestion ─────────────────────────────────────────────────
+    def accept_suggestion(state: ShopState) -> dict:
+        """Handle user accepting a previously offered suggestion.
+
+        If planned_items has a specific query, resolve it normally.
+        If planned_items is empty (generic 'si'), pick the top option from last_suggestions.
+        """
+        last_sug = state.get("last_suggestions") or []
+        planned = state.get("planned_items") or []
+
+        resolved_cart = []
+        resolutions = []
+        missing_items = []
+
+        if planned:
+            # User specified a product — resolve it normally
+            for item in planned:
+                query = item["query"]
+                qty = item.get("quantity", 1)
+                verdict = _resolve_product(query, qty, catalog)
+                resolution = {
+                    "query": query,
+                    "status": verdict["status"],
+                    "quantity": qty,
+                    "product": verdict.get("product"),
+                    "options": verdict.get("options"),
+                }
+                resolutions.append(resolution)
+                if verdict["status"] == "resolved":
+                    resolved_cart.append(_build_cart_item(verdict["product"], qty))
+                elif verdict["status"] == "not_found":
+                    missing_items.append(query)
+        elif last_sug:
+            # Generic acceptance — pick top option from each suggestion group
+            for sug in last_sug:
+                options = sug.get("options") or []
+                if options:
+                    top = options[0]
+                    qty = 1
+                    resolution = {
+                        "query": sug.get("query", top.get("name", "")),
+                        "status": "resolved",
+                        "quantity": qty,
+                        "product": top,
+                        "options": None,
+                    }
+                    resolutions.append(resolution)
+                    resolved_cart.append(_build_cart_item(top, qty))
+
+        return {
+            "resolutions": resolutions,
+            "resolved_cart": resolved_cart,
+            "missing_items": missing_items,
+            "suggestions": [],
+            "last_suggestions": [],  # clear after acceptance
+        }
+
+    # ── Node: reject_suggestion ─────────────────────────────────────────────────
+    def reject_suggestion(state: ShopState) -> dict:
+        """Handle user rejecting previously offered suggestions.
+
+        Clears last_suggestions so a subsequent 'si' won't add the rejected items.
+        Builds an honest reply acknowledging the product isn't available.
+        """
+        last_sug = state.get("last_suggestions") or []
+        rejected_queries = [s.get("query", "") for s in last_sug]
+        missing = rejected_queries if rejected_queries else ["el producto solicitado"]
+        return {
+            "resolutions": [],
+            "resolved_cart": [],
+            "missing_items": missing,
+            "suggestions": [],
+            "last_suggestions": [],  # clear so stale suggestions can't be accepted
         }
 
     # ── Node: apply_cart ───────────────────────────────────────────────────────
@@ -556,39 +695,74 @@ def _build_graph(catalog: list[dict], api_key: str):
         parts = []
         if added:
             names = ", ".join(r["product"]["name"] for r in added if r.get("product"))
-            parts.append(f"Agregué: {names}.")
+            parts.append(f"Agregué al carrito: {names}.")
         if missing:
             parts.append(f"No encontré: {', '.join(missing)}.")
 
+        # Show actual alternatives inline instead of vague "hay opciones similares"
         suggestions = state.get("suggestions") or []
         if suggestions:
-            sug_names = ", ".join(s["query"] for s in suggestions)
-            parts.append(f"No tengo exactamente: {sug_names}. Hay opciones similares disponibles.")
+            for sug in suggestions:
+                query = sug.get("query", "")
+                options = sug.get("options") or []
+                if options:
+                    option_names = ", ".join(
+                        opt.get("name", "") for opt in options[:3]
+                    )
+                    parts.append(
+                        f"No encontré {query}, pero hay alternativas: {option_names}. "
+                        f"Decime si querés que agregue alguna."
+                    )
+                else:
+                    parts.append(f"No encontré {query} ni alternativas similares.")
 
         facts = " ".join(parts) if parts else state.get("raw_message", "")
 
+        verbosity = (
+            (state.get("user_profile") or {})
+            .get("interaction", {})
+            .get("verbosity", "normal")
+        )
+        verbosity_instruction = {
+            "brief": "Respondé en UNA sola oración, sin preguntas adicionales.",
+            "normal": "Respondé de forma amable y concisa.",
+            "detailed": "Incluí precio y cantidad de cada producto mencionado.",
+        }.get(verbosity, "Respondé de forma amable y concisa.")
+
         system = (
-            "Sos un asistente de compras. Confirmá las acciones al usuario en español, "
-            "de forma amable y concisa. Sin markdown ni asteriscos."
+            f"Sos un asistente de compras. Confirmá las acciones al usuario en español. "
+            f"{verbosity_instruction} Sin markdown ni asteriscos. "
+            "NUNCA preguntes '¿te gustaría que busque?' ni '¿querés que te muestre?'. "
+            "Si hay alternativas, ya están listadas — solo preguntá cuál quiere o si quiere agregarlas. "
+            "NUNCA inventes productos ni listas de opciones. Solo mencioná los productos que aparecen "
+            "explícitamente en los datos. Si un producto no se encontró y no hay alternativas, "
+            "simplemente decí que no lo tenemos disponible."
         )
         try:
             response = llm.invoke([
                 SystemMessage(content=system),
                 HumanMessage(content=facts),
             ])
-            return {"reply": response.content}
+            result: dict = {"reply": response.content}
         except Exception:
             # Deterministic fallback
             fallback = " ".join(parts) if parts else "Hola, ¿en qué te puedo ayudar?"
-            if added and fallback:
-                fallback += " ¿Está bien así?"
-            return {"reply": fallback}
+            result = {"reply": fallback}
+
+        # Persist suggestions so suggestion_reply can reference them next turn
+        if suggestions:
+            result["last_suggestions"] = suggestions
+        return result
 
     # ── Routing ────────────────────────────────────────────────────────────────
     def route_after_classify(state: ShopState) -> str:
         turn_kind = state.get("turn_kind", "smalltalk")
         if turn_kind in ("smalltalk", "monthly_basket"):
             return "summarize"
+        if turn_kind == "suggestion_reply":
+            return "accept_suggestion"
+        if turn_kind == "suggestion_rejection":
+            return "reject_suggestion"
         return "resolve_items"
 
     def route_after_apply(state: ShopState) -> str:
@@ -600,6 +774,8 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph = StateGraph(ShopState)
     graph.add_node("classify_turn", classify_turn)
     graph.add_node("resolve_items", resolve_items)
+    graph.add_node("accept_suggestion", accept_suggestion)
+    graph.add_node("reject_suggestion", reject_suggestion)
     graph.add_node("apply_cart", apply_cart)
     graph.add_node("emit_clarification", emit_clarification)
     graph.add_node("summarize", summarize)
@@ -607,6 +783,8 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_edge(START, "classify_turn")
     graph.add_conditional_edges("classify_turn", route_after_classify)
     graph.add_edge("resolve_items", "apply_cart")
+    graph.add_edge("accept_suggestion", "apply_cart")
+    graph.add_edge("reject_suggestion", "summarize")  # skip cart — nothing to add
     graph.add_conditional_edges("apply_cart", route_after_apply)
     graph.add_edge("emit_clarification", "summarize")
     graph.add_edge("summarize", END)
@@ -623,6 +801,7 @@ def _handle_generate_basket(catalog: list[dict]) -> dict[str, Any]:
     """
     from backend.db import get_db, init_db
     from backend.product_semantic_index import generate_monthly_basket_candidates
+    from backend.user_profile import get_user_profile
 
     try:
         init_db()
@@ -640,24 +819,47 @@ def _handle_generate_basket(catalog: list[dict]) -> dict[str, Any]:
     finally:
         conn.close()
 
-    if not plan_row:
-        return {
-            "reply": "No tenés un plan de compras mensual guardado. Configuralo en la pestaña de compras recurrentes.",
-            "proposed_cart": [],
-            "cart": None,
-            "clarification": None,
-            "missing_items": [],
-        }
+    profile = get_user_profile()
+    profile_prefs = profile.get("preferences", {})
+    profile_household = profile.get("household", {})
 
-    plan = {
-        "household_size": plan_row["household_size"],
-        "monthly_budget": plan_row["monthly_budget"],
-        "must_haves": json.loads(plan_row["priority_items"]),
-        "preferred_brands": json.loads(plan_row["preferred_brands"]),
-        "strict_brand": bool(plan_row["strict_brand"]),
-        "excluded_categories": json.loads(plan_row["excluded_categories"]),
-        "notes": plan_row["notes"],
-    }
+    if not plan_row:
+        # Fall back to user_profile when no recurring plan is configured in DB
+        plan = {
+            "household_size": profile_household.get("size", 1),
+            "monthly_budget": profile_prefs.get("budget_monthly"),
+            "must_haves": [],
+            "preferred_brands": profile_prefs.get("preferred_brands", {}),
+            "strict_brand": profile_prefs.get("strict_brand", False),
+            "excluded_categories": profile_prefs.get("excluded_categories", []),
+            "notes": "",
+        }
+        # Only generate if profile has something useful; otherwise prompt setup
+        if not plan["monthly_budget"] and not plan["preferred_brands"]:
+            return {
+                "reply": "No tenés un plan de compras mensual guardado. Configuralo en la pestaña de compras recurrentes.",
+                "proposed_cart": [],
+                "cart": None,
+                "clarification": None,
+                "missing_items": [],
+            }
+    else:
+        plan = {
+            "household_size": plan_row["household_size"],
+            "monthly_budget": plan_row["monthly_budget"],
+            "must_haves": json.loads(plan_row["priority_items"]),
+            "preferred_brands": json.loads(plan_row["preferred_brands"]),
+            "strict_brand": bool(plan_row["strict_brand"]),
+            "excluded_categories": json.loads(plan_row["excluded_categories"]),
+            "notes": plan_row["notes"],
+        }
+        # Fill nulls from profile (DB wins, profile is fallback)
+        if plan["household_size"] in (None, 0):
+            plan["household_size"] = profile_household.get("size", 1)
+        if plan["monthly_budget"] is None:
+            plan["monthly_budget"] = profile_prefs.get("budget_monthly")
+        if not plan["excluded_categories"]:
+            plan["excluded_categories"] = profile_prefs.get("excluded_categories", [])
 
     # order_history: list[list[dict]] — each order is a flat list of cart items
     order_history: list[list[dict]] = []
@@ -731,6 +933,8 @@ def handle_chat(
 
     Graph state persists across turns via SqliteSaver (thread_id = session_id).
     """
+    from backend.user_profile import get_user_profile
+
     if action == "generate_monthly_basket":
         return _handle_generate_basket(_get_catalog())
 
@@ -814,12 +1018,14 @@ def handle_chat(
                     "resolved_cart": pre_resolved_cart,
                     "missing_items": [],
                     "suggestions": [],
+                    "last_suggestions": [],
                     "pending_clarification": None,
                     "reply": "",
                     "session_id": session_id,
                     "initial_cart": initial_cart,
                     "history": _trim_history(history),
                     "context": context or "",
+                    "user_profile": get_user_profile(),
                 }
                 final_state = app.invoke(resume_input, config=config)
                 return {
@@ -853,6 +1059,15 @@ def handle_chat(
         }
 
     # ── Normal turn ────────────────────────────────────────────────────────────
+    # Retrieve last_suggestions from prior state so suggestion_reply can reference them
+    prior_suggestions: list[dict] = []
+    if session_id:
+        try:
+            prior_state = app.get_state(config)
+            prior_suggestions = prior_state.values.get("last_suggestions") or []
+        except Exception:
+            prior_suggestions = []
+
     invoke_input: dict = {
         "raw_message": message,
         "turn_kind": "",
@@ -861,15 +1076,21 @@ def handle_chat(
         "resolved_cart": [],
         "missing_items": [],
         "suggestions": [],
+        "last_suggestions": prior_suggestions,
         "pending_clarification": None,
         "reply": "",
         "session_id": session_id,
         "initial_cart": initial_cart,
         "history": _trim_history(history),
         "context": context or "",
+        "user_profile": get_user_profile(),
     }
 
     final_state = app.invoke(invoke_input, config=config)
+
+    # If the classifier detected monthly_basket, delegate to the dedicated handler
+    if final_state.get("turn_kind") == "monthly_basket":
+        return _handle_generate_basket(catalog)
 
     clarification = final_state.get("pending_clarification")
     cart_result = (

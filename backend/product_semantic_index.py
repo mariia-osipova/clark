@@ -176,7 +176,12 @@ def _has_all_qualifiers(product: dict, qualifiers: list[str]) -> bool:
     return all(_normalize_text(q) in searchable for q in qualifiers)
 
 
-def resolve_product(query: str, quantity: int, catalog: list[dict]) -> dict:
+def resolve_product(
+    query: str,
+    quantity: int,
+    catalog: list[dict],
+    constraints: dict | None = None,
+) -> dict:
     """
     Single-call product resolution: wraps search → clarification detection → alternatives.
 
@@ -189,8 +194,13 @@ def resolve_product(query: str, quantity: int, catalog: list[dict]) -> dict:
 
     Eliminates ambiguity judgment and substitute-vs-report decisions from the LLM.
     The LLM receives this dict and routes accordingly — it does not compute it.
+
+    If `constraints` is provided it is used directly (caller has already merged
+    query-level and profile-level constraints); otherwise extract_constraints()
+    is called on the query.
     """
-    constraints = extract_constraints(query, catalog)
+    if constraints is None:
+        constraints = extract_constraints(query, catalog)
     results = search(query, catalog, constraints=constraints)
 
     if not results:

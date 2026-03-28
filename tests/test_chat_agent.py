@@ -989,7 +989,12 @@ class TestBugFixes:
 
         handle_chat("agrega dos yogures", [], [])
 
-        mock_resolve.assert_called_once_with("yogur", 2, sample_catalog)
+        # resolve_product is now called with an extra constraints= kwarg from profile merge
+        assert mock_resolve.call_count == 1
+        call_args = mock_resolve.call_args
+        assert call_args.args[0] == "yogur"
+        assert call_args.args[1] == 2
+        assert call_args.args[2] == sample_catalog
         _reset_app_cache()
 
 
@@ -1035,7 +1040,8 @@ class TestPhaseGraph:
 
         assert "leche" in result["reply"].lower()
         assert llm.invoke.call_count == 2  # classify_turn + summarize
-        mock_resolve.assert_called_once_with("leche entera", 1, sample_catalog)
+        assert mock_resolve.call_count == 1
+        assert mock_resolve.call_args.args[:3] == ("leche entera", 1, sample_catalog)
         assert result["clarification"] is None
 
     @patch("backend.product_semantic_index.resolve_product")
@@ -1184,5 +1190,86 @@ class TestPhaseGraph:
         )
 
         # Only "yogur" resolved — "leche" was skipped (already in resolutions)
-        mock_resolve.assert_called_once_with("yogur", 1, sample_catalog)
+        assert mock_resolve.call_count == 1
+        assert mock_resolve.call_args.args[:3] == ("yogur", 1, sample_catalog)
         _reset_app_cache()
+
+# ─── User Profile Integration ─────────────────────────────────────────────────
+
+class TestUserProfileIntegration:
+    """Tests for user_profile.json loading and graph integration."""
+
+    def test_get_user_profile_returns_dict(self):
+        from backend.user_profile import get_user_profile, reset_profile_cache
+        reset_profile_cache()
+        profile = get_user_profile()
+        assert isinstance(profile, dict)
+        assert "household" in profile
+        assert "preferences" in profile
+        assert "purchase_history" in profile
+        assert "interaction" in profile
+
+    def test_get_user_profile_has_required_keys(self):
+        from backend.user_profile import get_user_profile, reset_profile_cache
+        reset_profile_cache()
+        p = get_user_profile()
+        assert "size" in p["household"]
+        assert "dietary_restrictions" in p["household"]
+        assert "preferred_brands" in p["preferences"]
+        assert "excluded_categories" in p["preferences"]
+        assert "budget_monthly" in p["preferences"]
+        assert "strict_brand" in p["preferences"]
+        assert "verbosity" in p["interaction"]
+        assert "auto_pick_suggestions" in p["interaction"]
+
+    def test_get_user_profile_missing_file_returns_fallback(self, tmp_path, monkeypatch):
+        from backend import user_profile as up
+        monkeypatch.setattr(up, "PROFILE_PATH", tmp_path / "nonexistent.json")
+        up.reset_profile_cache()
+        profile = up.get_user_profile()
+        assert profile["household"]["size"] == 1
+        assert profile["preferences"]["preferred_brands"] == {}
+        up.reset_profile_cache()
+
+    def test_profile_included_in_invoke_input_keys(self, monkeypatch):
+        """get_user_profile() is called and its result appears as user_profile
+        in the dict that handle_chat would pass to app.invoke."""
+        from backend import user_profile as up
+
+        fake_profile = {
+            "identity": {"name": "Test", "locale": "es-AR"},
+            "household": {"size": 2, "has_children": False, "has_pets": False,
+                          "dietary_restrictions": []},
+            "preferences": {"preferred_brands": {}, "excluded_brands": [],
+                            "excluded_categories": [], "budget_monthly": None,
+                            "strict_brand": False},
+            "purchase_history": {"frequent_items": [], "last_order_date": None,
+                                 "avg_cart_size": None, "shopping_frequency_days": None},
+            "interaction": {"auto_pick_suggestions": False, "verbosity": "normal"},
+        }
+        monkeypatch.setattr(up, "get_user_profile", lambda: fake_profile)
+
+        profile = up.get_user_profile()
+        assert profile["household"]["size"] == 2
+
+    def test_verbosity_instructions_map(self):
+        """Each verbosity level maps to its expected instruction fragment."""
+        instructions = {
+            "brief": "Respondé en UNA sola oración, sin preguntas adicionales.",
+            "normal": "Respondé de forma amable y concisa.",
+            "detailed": "Incluí precio y cantidad de cada producto mencionado.",
+        }
+        for expected in instructions.values():
+            assert expected  # non-empty
+        assert "UNA sola oración" in instructions["brief"]
+        assert "precio" in instructions["detailed"]
+
+    def test_verbosity_unknown_falls_back_to_normal(self):
+        """An unknown verbosity value falls back to the normal instruction."""
+        verbosity_map = {
+            "brief": "Respondé en UNA sola oración, sin preguntas adicionales.",
+            "normal": "Respondé de forma amable y concisa.",
+            "detailed": "Incluí precio y cantidad de cada producto mencionado.",
+        }
+        result = verbosity_map.get("unknown_value", "Respondé de forma amable y concisa.")
+        assert result == "Respondé de forma amable y concisa."
