@@ -1,0 +1,179 @@
+.hero {
+  display: flex;
+  flex-direction: column;
+  max-width: 1500px;
+  height: 900px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  position: relative;
+  background: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.05) 0%,
+    rgba(0, 0, 0, 0.05) 100%
+  );
+}
+
+.hero .hero-information {
+  display: flex;
+  flex-direction: column;
+  width: 1272px;
+  max-height: 828px;
+  height: 372px;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 0px 40px;
+  position: relative;
+}
+
+.hero .hacemos-que-el {
+  position: relative;
+  width: 848px;
+  height: 324px;
+  text-shadow: 0px 4px 4px #00000040;
+  font-family: var(--heading-1-mari-font-family);
+  font-weight: var(--heading-1-mari-font-weight);
+  color: var(--textheadline-1);
+  font-size: var(--heading-1-mari-font-size);
+  text-align: center;
+  letter-spacing: var(--heading-1-mari-letter-spacing);
+  line-height: var(--heading-1-mari-line-height);
+  font-style: var(--heading-1-mari-font-style);
+}
+
+.hero .button-row {
+  gap: 16px;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.hero .button-primary {
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  background-color: var(--textheadline-1);
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.hero .bullet {
+  position: relative;
+  width: 4px;
+  height: 4px;
+  background-color: var(--textheadline-2);
+  aspect-ratio: 1;
+}
+
+.hero .request-a-demo {
+  position: relative;
+  width: fit-content;
+  margin-top: -1.00px;
+  font-family: var(--button-text-font-family);
+  font-weight: var(--button-text-font-weight);
+  color: var(--textheadline-2);
+  font-size: var(--button-text-font-size);
+  letter-spacing: var(--button-text-letter-spacing);
+  line-height: var(--button-text-line-height);
+  white-space: nowrap;
+  font-style: var(--button-text-font-style);
+}
+/* Original style.css content injected here */
+
+.hero {
+  display: flex;
+  flex-direction: column;
+  max-width: 1500px;
+  min-height: 900px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  position: relative;
+  background: linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.05) 0%,
+    rgba(0, 0, 0, 0.05) 100%
+  );
+}
+
+.hero .hero-information {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1272px;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 0px 40px;
+  position: relative;
+}
+
+.hero .hacemos-que-el {
+  position: relative;
+  max-width: 848px;
+  width: 100%;
+  text-shadow: 0px 4px 4px #00000040;
+  font-family: var(--heading-1-mari-font-family);
+  font-weight: var(--heading-1-mari-font-weight);
+  color: var(--textheadline-1);
+  font-size: var(--heading-1-mari-font-size);
+  text-align: center;
+  letter-spacing: var(--heading-1-mari-letter-spacing);
+  line-height: var(--heading-1-mari-line-height);
+  font-style: var(--heading-1-mari-font-style);
+  margin: 0;
+}
+
+.hero .button-row {
+  gap: 16px;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.hero .button-primary {
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  background-color: var(--textheadline-1);
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  flex: 0 0 auto;
+  border: none;
+  cursor: pointer;
+  outline: none;
+}
+
+.hero .button-primary:focus-visible {
+  outline: 2px solid #4a90e2;
+}
+
+.hero .bullet {
+  position: relative;
+  width: 4px;
+  height: 4px;
+  background-color: var(--textheadline-2);
+  aspect-ratio: 1;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.hero .request-a-demo {
+  position: relative;
+  width: fit-content;
+  margin-top: -1.00px;
+  font-family: var(--button-text-font-family);
+  font-weight: var(--button-text-font-weight);
+  color: var(--textheadline-2);
+  font-size: var(--button-text-font-size);
+  letter-spacing: var(--button-text-letter-spacing);
+  line-height: var(--button-text-line-height);
+  white-space: nowrap;
+  font-style: var(--button-text-font-style);
+}

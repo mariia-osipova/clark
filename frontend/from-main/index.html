@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>supershop</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Top navigation -->
+  <header class="nav">
+    <div class="nav__brand">supershop</div>
+    <nav class="nav__tabs">
+      <button class="tab tab--active" data-tab="catalog">Catálogo</button>
+      <button class="tab" data-tab="cart">Carrito <span class="cart-count" id="cart-count">0</span></button>
+      <button class="tab" data-tab="chat">Chat</button>
+    </nav>
+  </header>
+
+  <!-- Catalog tab -->
+  <section class="panel" id="panel-catalog">
+    <div class="search-bar">
+      <input type="text" id="search-input" placeholder="Buscar productos..." />
+    </div>
+    <div class="product-grid" id="product-grid">
+      <!-- Empty state -->
+      <div class="empty-state" id="catalog-emptoky">
+        <p>No hay productos disponibles.</p>
+      </div>
+      <!-- Loading state -->
+      <div class="loading-state hidden" id="catalog-loading">
+        <p>Cargando catálogo...</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Cart tab -->
+  <section class="panel hidden" id="panel-cart">
+    <div class="cart-panel">
+      <h2 class="cart-panel__title">Tu carrito</h2>
+      <div class="cart-items" id="cart-items">
+        <!-- Empty state -->
+        <div class="empty-state" id="cart-empty">
+          <p>Tu carrito está vacío. Usá el chat para agregar productos.</p>
+        </div>
+      </div>
+      <div class="cart-footer hidden" id="cart-footer">
+        <div class="cart-total">
+          Total: <span id="cart-total">$0.00</span>
+        </div>
+        <button class="btn btn--primary" id="btn-checkout">Confirmar pedido</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Chat tab -->
+  <section class="panel hidden" id="panel-chat">
+    <div class="chat-shell">
+      <div class="chat-thread" id="chat-thread">
+        <!-- Empty state -->
+        <div class="empty-state" id="chat-empty">
+          <p>Hola! Podés pedirme productos, recetas o armar tu compra mensual.</p>
+        </div>
+      </div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" placeholder="Escribe tu pedido..." />
+        <button class="btn btn--primary" id="btn-send">Enviar</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Clarification modal -->
+  <div class="modal hidden" id="clarification-modal">
+    <div class="modal__overlay"></div>
+    <div class="modal__box" role="dialog" aria-modal="true" aria-labelledby="modal-question">
+      <h2 class="modal__question" id="modal-question"></h2>
+      <form id="clarification-form">
+        <fieldset class="modal__fieldset">
+          <legend class="visually-hidden">Opciones de aclaración</legend>
+          <div class="modal__options" id="modal-options"></div>
+        </fieldset>
+        <p class="modal__error hidden" id="modal-error" aria-live="polite"></p>
+        <div class="modal__actions">
+          <button class="btn btn--primary" id="modal-confirm" type="submit" disabled>Confirmar</button>
+          <button class="btn btn--secondary" id="modal-cancel" type="button">Cancelar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

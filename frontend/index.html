@@ -1,97 +1,226 @@
 <!DOCTYPE html>
 <html lang="es">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>supershop</title>
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-
-  <!-- Top navigation -->
-  <header class="nav">
-    <div class="nav__brand">supershop</div>
-    <nav class="nav__tabs">
-      <button class="tab tab--active" data-tab="catalog">Catálogo</button>
-      <button class="tab" data-tab="cart">Carrito <span class="cart-count" id="cart-count">0</span></button>
-      <button class="tab" data-tab="chat">Chat</button>
-    </nav>
-  </header>
-
-  <!-- Catalog tab -->
-  <section class="panel" id="panel-catalog">
-    <div class="search-bar">
-      <input type="text" id="search-input" placeholder="Buscar productos..." />
-    </div>
-    <div class="product-grid" id="product-grid">
-      <!-- Empty state -->
-      <div class="empty-state" id="catalog-empty">
-        <p>No hay productos disponibles.</p>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="utf-8" />
+    <title>SuperShop — Hacemos que el shopper compre feliz</title>
+    <link rel="icon" type="image/png" href="https://c.animaapp.com/Y5zUzjcR/img/group-23@6x.png" />
+    <link rel="stylesheet" href="globals.css" />
+    <link rel="stylesheet" href="styleguide.css" />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="preload" as="image" href="pics/hero-1440.webp" type="image/webp" media="(min-width: 769px)" />
+    <link rel="preload" as="image" href="pics/hero-768.webp" type="image/webp" media="(max-width: 768px)" />
+    <link rel="preload" as="image" href="pics/Group%209.png" />
+  </head>
+  <body>
+    <div class="desktop" data-model-id="1:929">
+      <div class="navigation">
+        <a href="index.html" class="div" style="text-decoration:none;">
+          <img class="group" src="https://c.animaapp.com/Y5zUzjcR/img/group-23@6x.png" alt="SuperShop logo" />
+          <div class="text-wrapper">SuperShop</div>
+        </a>
+        <nav class="navbar" aria-label="Main navigation">
+          <a href="index.html" class="text-wrapper-2">Product</a>
+          <a href="about.html" class="text-wrapper-2">About</a>
+          <a href="contact.html" class="text-link">
+            <span class="text-wrapper-2">Get started</span>
+            <img class="arrow" src="https://c.animaapp.com/Y5zUzjcR/img/arrow.svg" alt="" aria-hidden="true" />
+          </a>
+        </nav>
       </div>
-      <!-- Loading state -->
-      <div class="loading-state hidden" id="catalog-loading">
-        <p>Cargando catálogo...</p>
-      </div>
-    </div>
-  </section>
-
-  <!-- Cart tab -->
-  <section class="panel hidden" id="panel-cart">
-    <div class="cart-panel">
-      <h2 class="cart-panel__title">Tu carrito</h2>
-      <div class="cart-items" id="cart-items">
-        <!-- Empty state -->
-        <div class="empty-state" id="cart-empty">
-          <p>Tu carrito está vacío. Usá el chat para agregar productos.</p>
+      <div class="hero">
+        <div class="hero-information">
+          <p class="hacemos-que-el">Hacemos que el shopper compre feliz,<br />más, mejor y por más tiempo.</p>
+        </div>
+        <div class="button-row">
+          <a href="chat.html" class="button-primary">
+            <div class="bullet"></div>
+            <div class="request-a-demo">Mirar la Demo</div>
+          </a>
+          <button class="button-primary" type="button">
+            <div class="bullet"></div>
+            <div class="request-a-demo">Explorar la plataforma</div>
+          </button>
         </div>
       </div>
-      <div class="cart-footer hidden" id="cart-footer">
-        <div class="cart-total">
-          Total: <span id="cart-total">$0.00</span>
+      <div class="main">
+        <div class="heading-como">
+          <img class="heading-como-img" src="https://c.animaapp.com/Y5zUzjcR/img/group-23@6x.png" alt="SuperShop logo" />
+          <h2 class="heading-como-label">Mira como funciona el SúperShop:</h2>
         </div>
-        <button class="btn btn--primary" id="btn-checkout">Confirmar pedido</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- Chat tab -->
-  <section class="panel hidden" id="panel-chat">
-    <div class="chat-shell">
-      <div class="chat-toolbar">
-        <button class="btn btn--ghost btn--sm" id="btn-new-chat" title="Nueva conversación">+ Nueva conversación</button>
-      </div>
-      <div class="chat-thread" id="chat-thread">
-        <!-- Empty state -->
-        <div class="empty-state" id="chat-empty">
-          <p>Hola! Podés pedirme productos, recetas o armar tu compra mensual.</p>
+        <div class="footer-with-bag">
+          <div class="frame">
+            <p class="element-el-shoper-cunta-lo">
+              1. El cliente describe lo que quiere comprar<br /><br />2. El agente arma el carrito automáticamente<br /><br />3. El cliente confirma y ajusta si quiere<br /><br />4. El pedido se entrega sin fricciones<br /><br />5. SuperShop aprende y anticipa la próxima compra
+            </p>
+          </div>
         </div>
       </div>
-      <div class="chat-input-row">
-        <input type="text" id="chat-input" placeholder="Escribe tu pedido..." />
-        <button class="btn btn--primary" id="btn-send">Enviar</button>
-      </div>
-    </div>
-  </section>
-
-  <!-- Clarification modal -->
-  <div class="modal hidden" id="clarification-modal">
-    <div class="modal__overlay"></div>
-    <div class="modal__box" role="dialog" aria-modal="true" aria-labelledby="modal-question">
-      <h2 class="modal__question" id="modal-question"></h2>
-      <form id="clarification-form">
-        <fieldset class="modal__fieldset">
-          <legend class="visually-hidden">Opciones de aclaración</legend>
-          <div class="modal__options" id="modal-options"></div>
-        </fieldset>
-        <p class="modal__error hidden" id="modal-error" aria-live="polite"></p>
-        <div class="modal__actions">
-          <button class="btn btn--primary" id="modal-confirm" type="submit" disabled>Confirmar</button>
-          <button class="btn btn--secondary" id="modal-cancel" type="button">Cancelar</button>
+      <!-- Sección A — Problema -->
+      <section class="lp-problem">
+        <div class="lp-container">
+          <p class="lp-eyebrow">El problema</p>
+          <h2 class="lp-heading">La experiencia de compra online tiene un problema de fondo</h2>
+          <p class="lp-body">El comprador llega, no encuentra lo que busca, abandona el carrito o llama al servicio al cliente. Eso se traduce en pedidos cancelados, reclamos operativos y clientes que la próxima vez eligen otro supermercado. El problema no es la oferta — es la fricción entre la intención y la compra.</p>
+          <ul class="lp-bullets">
+            <li>Carritos incompletos y cancelaciones evitables que erosionan el margen y saturan al equipo de soporte</li>
+            <li>Experiencias impersonales que no reconocen los hábitos del cliente ni anticipan su compra habitual</li>
+            <li>Reclamos operativos repetidos por productos mal seleccionados, sustituciones inesperadas o pedidos mal armados</li>
+          </ul>
         </div>
-      </form>
-    </div>
-  </div>
+      </section>
 
-  <script src="app.js"></script>
-</body>
+      <!-- Sección B — Features -->
+      <section class="lp-features">
+        <div class="lp-container">
+          <p class="lp-eyebrow">La plataforma</p>
+          <h2 class="lp-heading">Una plataforma. Todo el ciclo de compra.</h2>
+          <p class="lp-subheading">SuperShop centraliza la experiencia de compra conversacional, la gestión del carrito y la inteligencia del cliente en un solo agente integrado a tu operación.</p>
+          <div class="lp-cards">
+            <div class="lp-card">
+              <span class="lp-card__num">01</span>
+              <h3 class="lp-card__title">Agente de compras conversacional</h3>
+              <p class="lp-card__body">Entiende pedidos en lenguaje natural y los convierte en un carrito completo en segundos.</p>
+              <p class="lp-card__support">El cliente escribe "quiero hacer la compra del mes" y el agente lo resuelve solo.</p>
+            </div>
+            <div class="lp-card">
+              <span class="lp-card__num">02</span>
+              <h3 class="lp-card__title">Armado automático del carrito</h3>
+              <p class="lp-card__body">El agente selecciona productos del catálogo real y sugiere alternativas cuando hay quiebres de stock.</p>
+              <p class="lp-card__support">Sin fricción, sin búsqueda manual, sin abandono.</p>
+            </div>
+            <div class="lp-card">
+              <span class="lp-card__num">03</span>
+              <h3 class="lp-card__title">Clarificación inteligente</h3>
+              <p class="lp-card__body">Cuando hay ambigüedad, el agente pregunta lo necesario para completar el pedido con precisión.</p>
+              <p class="lp-card__support">Menos errores, menos reclamos post-entrega.</p>
+            </div>
+            <div class="lp-card">
+              <span class="lp-card__num">04</span>
+              <h3 class="lp-card__title">Compra recurrente</h3>
+              <p class="lp-card__body">SuperShop recuerda los hábitos del cliente y propone su canasta habitual con un clic.</p>
+              <p class="lp-card__support">Aumenta la frecuencia de compra sin esfuerzo de marketing adicional.</p>
+            </div>
+            <div class="lp-card">
+              <span class="lp-card__num">05</span>
+              <h3 class="lp-card__title">Panel de control operativo</h3>
+              <p class="lp-card__body">Visibilidad completa sobre pedidos, preferencias de clientes y rendimiento del agente en tiempo real.</p>
+              <p class="lp-card__support">Tu equipo toma decisiones con datos, no con suposiciones.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sección C — Métricas -->
+      <section class="lp-metrics">
+        <div class="lp-container">
+          <p class="lp-eyebrow lp-eyebrow--light">Resultados</p>
+          <h2 class="lp-heading lp-heading--light">Resultados que se miden en el negocio</h2>
+          <p class="lp-subheading lp-subheading--light">SuperShop no mejora métricas de vanidad. Mueve los números que le importan a tu operación.</p>
+          <div class="lp-metrics__grid">
+            <div class="lp-metric">
+              <span class="lp-metric__num">+[X]%</span>
+              <span class="lp-metric__label">ticket promedio</span>
+              <p class="lp-metric__desc">El agente sugiere productos complementarios y completa canastas que el cliente no habría armado solo.</p>
+            </div>
+            <div class="lp-metric">
+              <span class="lp-metric__num">-[X]%</span>
+              <span class="lp-metric__label">cancelaciones</span>
+              <p class="lp-metric__desc">La clarificación previa al carrito reduce errores de selección y expectativas mal alineadas.</p>
+            </div>
+            <div class="lp-metric">
+              <span class="lp-metric__num">+[X]%</span>
+              <span class="lp-metric__label">frecuencia de compra</span>
+              <p class="lp-metric__desc">La canasta recurrente y la experiencia fluida reducen el esfuerzo de recompra.</p>
+            </div>
+            <div class="lp-metric">
+              <span class="lp-metric__num">-[X]%</span>
+              <span class="lp-metric__label">reclamos operativos</span>
+              <p class="lp-metric__desc">Un pedido bien armado desde el inicio genera menos fricciones en la entrega.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sección D — Testimonios -->
+      <section class="lp-testimonials">
+        <div class="lp-container">
+          <p class="lp-eyebrow">Prueba social</p>
+          <h2 class="lp-heading">Lo que dicen quienes ya lo usan</h2>
+          <div class="lp-testimonials__grid">
+            <blockquote class="lp-testimonial">
+              <p class="lp-testimonial__quote">"Desde que implementamos SuperShop, el cliente llega al checkout con un carrito que realmente refleja lo que quería comprar. La diferencia en reclamos fue inmediata."</p>
+              <footer class="lp-testimonial__footer">
+                <strong>[Nombre]</strong>
+                <span>Director de Operaciones — [Cadena de supermercados]</span>
+              </footer>
+            </blockquote>
+            <blockquote class="lp-testimonial">
+              <p class="lp-testimonial__quote">"El ticket promedio subió y el equipo de soporte dejó de recibir las mismas consultas de siempre. Nuestros clientes lo adoptaron sin ninguna capacitación."</p>
+              <footer class="lp-testimonial__footer">
+                <strong>[Nombre]</strong>
+                <span>Gerente de Canales Digitales — [Empresa retail]</span>
+              </footer>
+            </blockquote>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sección E — Tecnología -->
+      <section class="lp-tech">
+        <div class="lp-container lp-tech__inner">
+          <div class="lp-tech__text">
+            <p class="lp-eyebrow">Tecnología</p>
+            <h2 class="lp-heading">Construido para operar a escala, sin empezar de cero</h2>
+            <p class="lp-body">SuperShop se integra al catálogo y la infraestructura que ya tenés. No reemplaza tu plataforma — la hace más inteligente.</p>
+            <ul class="lp-tech__bullets">
+              <li><strong>Integración sobre tu catálogo existente</strong> — el agente trabaja con tus SKUs, tus precios y tus reglas de negocio actuales, sin migraciones.</li>
+              <li><strong>Escalable por volumen</strong> — la arquitectura soporta picos de demanda sin degradar la experiencia ni la velocidad de respuesta.</li>
+              <li><strong>Configurable por cadena, formato o región</strong> — las reglas de clarificación y recomendación se adaptan a cada operación sin desarrollo a medida.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sección F — Motor -->
+      <section class="lp-engine">
+        <div class="lp-container">
+          <p class="lp-eyebrow">El núcleo</p>
+          <h2 class="lp-heading">El agente que convierte intención en pedido</h2>
+          <p class="lp-subheading">El motor de SuperShop combina comprensión de lenguaje natural, búsqueda semántica sobre tu catálogo y lógica de negocio configurable para ejecutar la compra de principio a fin.</p>
+          <div class="lp-engine__grid">
+            <div class="lp-engine__block">
+              <h3 class="lp-engine__title">Comprensión de lenguaje natural</h3>
+              <p class="lp-engine__desc">Interpreta pedidos como habla cualquier cliente — con nombres genéricos, marcas o referencias ambiguas — y los resuelve contra el catálogo real.</p>
+            </div>
+            <div class="lp-engine__block">
+              <h3 class="lp-engine__title">Búsqueda semántica sobre el catálogo</h3>
+              <p class="lp-engine__desc">No busca por palabra exacta. Entiende el significado del pedido y encuentra los productos más relevantes aunque el cliente no use el nombre técnico del SKU.</p>
+            </div>
+            <div class="lp-engine__block">
+              <h3 class="lp-engine__title">Resolución de ambigüedad sin fricción</h3>
+              <p class="lp-engine__desc">Cuando un pedido puede interpretarse de más de una forma, el agente presenta opciones concretas y espera confirmación antes de sumar al carrito.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sección G — CTA final -->
+      <section class="lp-cta-final">
+        <div class="lp-container">
+          <h2 class="lp-cta-final__heading">Tu operación, con la experiencia de compra que tus clientes esperan</h2>
+          <p class="lp-cta-final__body">Cada semana de fricción es una semana en que tu cliente evalúa irse. SuperShop reduce esa fricción, sube el valor por pedido y construye el hábito de recompra que hace que un cliente se quede con vos por años.</p>
+          <div class="lp-cta-final__actions">
+            <a href="chat.html" class="button-primary">
+              <div class="bullet"></div>
+              <div class="request-a-demo">Ver demo en vivo</div>
+            </a>
+          </div>
+          <p class="lp-cta-final__reassurance">Sin compromiso. Sin reemplazar tu infraestructura actual.</p>
+        </div>
+      </section>
+
+      <div class="footer"></div>
+    </div>
+  </body>
 </html>

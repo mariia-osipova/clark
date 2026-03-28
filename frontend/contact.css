@@ -1,0 +1,269 @@
+/* contact.css — Get Started / Write to us page */
+
+/* ── Hero ── */
+.contact-hero {
+  background-color: var(--textheadline-2);
+  width: 100%;
+  padding: 80px 0 72px;
+}
+
+.contact-hero .lp-eyebrow {
+  color: var(--textheadline-1);
+  opacity: 0.8;
+}
+
+.contact-hero__heading {
+  font-family: var(--heading-1-mari-font-family);
+  font-weight: var(--heading-1-mari-font-weight);
+  font-size: clamp(2.8rem, 7vw, 6rem);
+  line-height: 1.0;
+  letter-spacing: -0.02em;
+  color: var(--textheadline-1);
+  margin: 16px 0 28px;
+}
+
+.contact-hero__sub {
+  font-family: var(--button-text-font-family);
+  font-size: 1rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 241, 0.7);
+  max-width: 520px;
+}
+
+/* ── Form section ── */
+.contact-form-section {
+  background-color: var(--backgroundbackground-1);
+  width: 100%;
+  padding: 72px 0 96px;
+}
+
+.contact-form-section__inner {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 80px;
+  align-items: start;
+}
+
+/* ── Form ── */
+.contact-form-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.contact-form {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.contact-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.contact-label {
+  font-family: var(--button-text-font-family);
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--textheadline-2);
+}
+
+.contact-input {
+  font-family: var(--button-text-font-family);
+  font-size: 0.95rem;
+  color: var(--textbody-1);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid var(--textheadline-2);
+  padding: 10px 0;
+  outline: none;
+  width: 100%;
+  transition: border-color 0.15s ease;
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 0;
+}
+
+.contact-input::placeholder {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+.contact-input:focus {
+  border-bottom-color: var(--textheadline-2);
+}
+
+.contact-select {
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg width='12' height='8' viewBox='0 0 12 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%238E1606' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  padding-right: 24px;
+}
+
+.contact-textarea {
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.5;
+}
+
+.contact-form__error {
+  font-family: var(--button-text-font-family);
+  font-size: 0.8rem;
+  color: var(--textheadline-2);
+  margin: -8px 0 0;
+}
+
+/* ── Submit button ── */
+.contact-submit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: flex-start;
+  margin-top: 12px;
+  padding: 16px 32px;
+  background: var(--textheadline-2);
+  color: var(--textheadline-1);
+  border: none;
+  cursor: pointer;
+  font-family: var(--button-text-font-family);
+  font-size: 0.875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.contact-submit:hover  { opacity: 0.88; }
+.contact-submit:active { transform: scale(0.98); }
+.contact-submit:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+.contact-submit__arrow {
+  transition: transform 0.15s ease;
+}
+
+.contact-submit:not(:disabled):hover .contact-submit__arrow {
+  transform: translateX(4px);
+}
+
+/* ── Success state ── */
+.contact-success {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 48px 0;
+}
+
+.contact-success__icon {
+  font-size: 2rem;
+  color: var(--textheadline-2);
+  font-family: var(--button-text-font-family);
+}
+
+.contact-success__heading {
+  font-family: var(--heading-1-mari-font-family);
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 400;
+  color: var(--textheadline-2);
+  line-height: 1;
+  margin: 0;
+}
+
+.contact-success__body {
+  font-family: var(--button-text-font-family);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--textbody-1);
+  max-width: 420px;
+}
+
+.contact-success__cta {
+  align-self: flex-start;
+  margin-top: 8px;
+}
+
+/* ── Reasons sidebar ── */
+.contact-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  padding-top: 8px;
+}
+
+.contact-reason {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 40px;
+  border-bottom: 1px solid rgba(202, 30, 8, 0.2);
+}
+
+.contact-reason:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.contact-reason__num {
+  font-family: var(--button-text-font-family);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: var(--textheadline-2);
+  opacity: 0.5;
+  text-transform: uppercase;
+}
+
+.contact-reason__text {
+  font-family: var(--button-text-font-family);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  color: var(--textbody-1);
+}
+
+/* ── Utilities ── */
+.hidden { display: none !important; }
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .contact-form-section__inner {
+    grid-template-columns: 1fr;
+    gap: 48px;
+  }
+
+  .contact-reasons {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 24px;
+  }
+
+  .contact-reason {
+    flex: 1;
+    min-width: 200px;
+    padding-bottom: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .contact-hero {
+    padding: 56px 0 52px;
+  }
+
+  .contact-hero__heading {
+    font-size: clamp(2.2rem, 12vw, 3rem);
+  }
+
+  .contact-form-section {
+    padding: 48px 0 64px;
+  }
+
+  .contact-reasons {
+    flex-direction: column;
+  }
+
+  .contact-submit {
+    width: 100%;
+    justify-content: center;
+  }
+}

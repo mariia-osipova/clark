@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" height="100%" overflow="visible" preserveAspectRatio="none" style="display: block;" viewBox="0 0 35 31.5" width="100%">
+<g id="Group 23">
+<g id="Vector">
+<path d="M31.5 3.01003e-06H35V3.5H31.5V3.01003e-06Z" fill="var(--fill-0, black)"/>
+<path d="M28 3.01003e-06H31.5V3.5H28V3.01003e-06Z" fill="var(--fill-0, black)"/>
+<path d="M28 3.5H31.5V7H28V3.5Z" fill="var(--fill-0, black)"/>
+<path d="M28 7H31.5V10.5H28V7Z" fill="var(--fill-0, black)"/>
+<path d="M21 7H24.5V10.5H21V7Z" fill="var(--fill-0, black)"/>
+<path d="M24.5 7H28V10.5H24.5V7Z" fill="var(--fill-0, black)"/>
+<path d="M17.5 7H21V10.5H17.5V7Z" fill="var(--fill-0, black)"/>
+<path d="M14 7H17.5V10.5H14V7Z" fill="var(--fill-0, black)"/>
+<path d="M10.5 7H14V10.5H10.5V7Z" fill="var(--fill-0, black)"/>
+<path d="M7 7H10.5V10.5H7V7Z" fill="var(--fill-0, black)"/>
+<path d="M3.5 7H7V10.5H3.5V7Z" fill="var(--fill-0, black)"/>
+<path d="M0 7H3.5V10.5H0V7Z" fill="var(--fill-0, black)"/>
+<path d="M0 10.5H3.5V14H0V10.5Z" fill="var(--fill-0, black)"/>
+<path d="M0 14H3.5V17.5H0V14Z" fill="var(--fill-0, black)"/>
+<path d="M0 17.5H3.5V21H0V17.5Z" fill="var(--fill-0, black)"/>
+<path d="M3.5 21H7V24.5H3.5V21Z" fill="var(--fill-0, black)"/>
+<path d="M7 24.5H10.5V28H7V24.5Z" fill="var(--fill-0, black)"/>
+<path d="M7 21H10.5V24.5H7V21Z" fill="var(--fill-0, black)"/>
+<path d="M7 17.5H10.5V21H7V17.5Z" fill="var(--fill-0, black)"/>
+<path d="M7 14H10.5V17.5H7V14Z" fill="var(--fill-0, black)"/>
+<path d="M7 14H10.5V17.5H7V14Z" fill="var(--fill-0, black)"/>
+<path d="M7 10.5H10.5V14H7V10.5Z" fill="var(--fill-0, black)"/>
+<path d="M3.5 14H7V17.5H3.5V14Z" fill="var(--fill-0, black)"/>
+<path d="M7 14H10.5V17.5H7V14Z" fill="var(--fill-0, black)"/>
+<path d="M10.5 14H14V17.5H10.5V14Z" fill="var(--fill-0, black)"/>
+<path d="M14 14H17.5V17.5H14V14Z" fill="var(--fill-0, black)"/>
+<path d="M17.5 14H21V17.5H17.5V14Z" fill="var(--fill-0, black)"/>
+<path d="M21 14H24.5V17.5H21V14Z" fill="var(--fill-0, black)"/>
+<path d="M24.5 14H28V17.5H24.5V14Z" fill="var(--fill-0, black)"/>
+<path d="M28 14L30.1 15.8667V19.3667L28 17.5V14Z" fill="var(--fill-0, black)"/>
+<path d="M14 21H17.5V24.5H14V21Z" fill="var(--fill-0, black)"/>
+<path d="M14 17.5H17.5V21H14V17.5Z" fill="var(--fill-0, black)"/>
+<path d="M14 14H17.5V17.5H14V14Z" fill="var(--fill-0, black)"/>
+<path d="M14 14H17.5V17.5H14V14Z" fill="var(--fill-0, black)"/>
+<path d="M14 10.5H17.5V14H14V10.5Z" fill="var(--fill-0, black)"/>
+<path d="M21 21H24.5V24.5H21V21Z" fill="var(--fill-0, black)"/>
+<path d="M21 17.5H24.5V21H21V17.5Z" fill="var(--fill-0, black)"/>
+<path d="M21 14H24.5V17.5H21V14Z" fill="var(--fill-0, black)"/>
+<path d="M21 14H24.5V17.5H21V14Z" fill="var(--fill-0, black)"/>
+<path d="M21 10.5H24.5V14H21V10.5Z" fill="var(--fill-0, black)"/>
+<path d="M3.5 28H7V31.5H3.5V28Z" fill="var(--fill-0, black)"/>
+<path d="M10.5 24.5H14V28H10.5V24.5Z" fill="var(--fill-0, black)"/>
+<path d="M14 24.5H17.5V28H14V24.5Z" fill="var(--fill-0, black)"/>
+<path d="M17.5 24.5H21V28H17.5V24.5Z" fill="var(--fill-0, black)"/>
+<path d="M21 24.5H24.5V28H21V24.5Z" fill="var(--fill-0, black)"/>
+<path d="M24.5 24.5H28V28H24.5V24.5Z" fill="var(--fill-0, black)"/>
+<path d="M24.5 28H28V31.5H24.5V28Z" fill="var(--fill-0, black)"/>
+<path d="M28 10.5H31.5V14H28V10.5Z" fill="var(--fill-0, black)"/>
+<path d="M28 14H31.5V17.5H28V14Z" fill="var(--fill-0, black)"/>
+<path d="M28 17.5H31.5V21H28V17.5Z" fill="var(--fill-0, black)"/>
+<path d="M28 21H31.5V24.5H28V21Z" fill="var(--fill-0, black)"/>
+<path d="M28 24.5H31.5V28H28V24.5Z" fill="var(--fill-0, black)"/>
+<path d="M3.5 24.5H7V28H3.5V24.5Z" fill="var(--fill-0, black)"/>
+</g>
+</g>
+</svg>

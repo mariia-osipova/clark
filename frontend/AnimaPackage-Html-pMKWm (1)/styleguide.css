@@ -1,0 +1,20 @@
+:root {
+  --textheadline-1: rgba(234, 255, 116, 1);
+  --textheadline-2: rgba(142, 22, 6, 1);
+  --textbutton-text: rgba(255, 255, 255, 1);
+  --backgroundbackground-5: rgba(0, 0, 0, 1);
+  --heading-1-mari-font-family: "Radio Canada Big", Helvetica;
+  --heading-1-mari-font-weight: 400;
+  --heading-1-mari-font-size: 80px;
+  --heading-1-mari-letter-spacing: 0px;
+  --heading-1-mari-line-height: 79px;
+  --heading-1-mari-font-style: normal;
+  --button-text-font-family: "Geist Mono", Helvetica;
+  --button-text-font-weight: 500;
+  --button-text-font-size: 14px;
+  --button-text-letter-spacing: 0px;
+  --button-text-line-height: 100%;
+  --button-text-font-style: normal;
+  --dropshadow: 0px 8px 8px -4px rgba(0, 0, 0, 0.08), 0px 4px 6px -4px
+    rgba(0, 0, 0, 0.12);
+}

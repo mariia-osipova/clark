@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="utf-8" />
+    <title>SuperShop — Hablemos</title>
+    <link rel="icon" type="image/png" href="https://c.animaapp.com/Y5zUzjcR/img/group-23@6x.png" />
+    <link rel="stylesheet" href="globals.css" />
+    <link rel="stylesheet" href="styleguide.css" />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="contact.css" />
+  </head>
+  <body>
+    <div class="desktop">
+
+      <!-- Navigation -->
+      <div class="navigation">
+        <a href="index.html" class="div" style="text-decoration:none;">
+          <img class="group" src="https://c.animaapp.com/Y5zUzjcR/img/group-23@6x.png" alt="SuperShop logo" />
+          <div class="text-wrapper">SuperShop</div>
+        </a>
+        <nav class="navbar" aria-label="Main navigation">
+          <a href="index.html" class="text-wrapper-2">Product</a>
+          <a href="about.html" class="text-wrapper-2">About</a>
+          <a href="contact.html" class="text-link">
+            <span class="text-wrapper-2">Get started</span>
+            <img class="arrow" src="https://c.animaapp.com/Y5zUzjcR/img/arrow.svg" alt="" aria-hidden="true" />
+          </a>
+        </nav>
+      </div>
+
+      <!-- Hero -->
+      <section class="contact-hero">
+        <div class="lp-container">
+          <p class="lp-eyebrow">Escribinos</p>
+          <h1 class="contact-hero__heading">¿Querés llevar<br />SuperShop a tu<br />operación?</h1>
+          <p class="contact-hero__sub">Contanos sobre tu supermercado y te mostramos cómo funciona en tu catálogo real.</p>
+        </div>
+      </section>
+
+      <!-- Form section -->
+      <section class="contact-form-section">
+        <div class="lp-container contact-form-section__inner">
+
+          <!-- Left: form -->
+          <div class="contact-form-wrap">
+            <form class="contact-form" id="contact-form" novalidate>
+
+              <div class="contact-field">
+                <label class="contact-label" for="cf-name">Tu nombre</label>
+                <input class="contact-input" id="cf-name" name="name" type="text" placeholder="María García" autocomplete="name" required />
+              </div>
+
+              <div class="contact-field">
+                <label class="contact-label" for="cf-email">Email de trabajo</label>
+                <input class="contact-input" id="cf-email" name="email" type="email" placeholder="maria@carrefour.com" autocomplete="email" required />
+              </div>
+
+              <div class="contact-field">
+                <label class="contact-label" for="cf-company">Empresa / cadena</label>
+                <input class="contact-input" id="cf-company" name="company" type="text" placeholder="Carrefour Argentina" autocomplete="organization" />
+              </div>
+
+              <div class="contact-field">
+                <label class="contact-label" for="cf-role">Tu rol</label>
+                <select class="contact-input contact-select" id="cf-role" name="role">
+                  <option value="" disabled selected>Seleccioná una opción</option>
+                  <option value="ops">Director / Gerente de Operaciones</option>
+                  <option value="digital">Gerente de Canales Digitales</option>
+                  <option value="tech">CTO / Líder Tecnológico</option>
+                  <option value="ecomm">E-commerce Manager</option>
+                  <option value="other">Otro</option>
+                </select>
+              </div>
+
+              <div class="contact-field">
+                <label class="contact-label" for="cf-message">¿Qué querés resolver?</label>
+                <textarea class="contact-input contact-textarea" id="cf-message" name="message" rows="4" placeholder="Tenemos un problema con carritos abandonados y nos gustaría ver cómo SuperShop lo resuelve..."></textarea>
+              </div>
+
+              <p class="contact-form__error hidden" id="cf-error" aria-live="polite"></p>
+
+              <button class="contact-submit" type="submit" id="cf-submit">
+                <span id="cf-submit-label">Enviar mensaje</span>
+                <svg class="contact-submit__arrow" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M2 8h12M9 3l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+
+            </form>
+
+            <!-- Success state -->
+            <div class="contact-success hidden" id="contact-success" aria-live="polite">
+              <div class="contact-success__icon">✓</div>
+              <h2 class="contact-success__heading">Mensaje enviado.</h2>
+              <p class="contact-success__body">Te contactamos en las próximas 24 horas hábiles. Si mientras tanto querés ver el agente en acción, podés probarlo ahora.</p>
+              <a href="chat.html" class="button-primary contact-success__cta">
+                <div class="bullet"></div>
+                <div class="request-a-demo">Ver demo en vivo</div>
+              </a>
+            </div>
+          </div>
+
+          <!-- Right: reasons -->
+          <aside class="contact-reasons">
+            <div class="contact-reason">
+              <span class="contact-reason__num">01</span>
+              <p class="contact-reason__text">Te mostramos SuperShop funcionando con tu catálogo real — no con datos de demo.</p>
+            </div>
+            <div class="contact-reason">
+              <span class="contact-reason__num">02</span>
+              <p class="contact-reason__text">Sin compromisos. Sin reemplazar tu infraestructura actual.</p>
+            </div>
+            <div class="contact-reason">
+              <span class="contact-reason__num">03</span>
+              <p class="contact-reason__text">La integración lleva días, no meses. Tu equipo no necesita hacer una migración.</p>
+            </div>
+          </aside>
+
+        </div>
+      </section>
+
+      <div class="footer"></div>
+    </div>
+
+    <script>
+      document.getElementById('contact-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const btn = document.getElementById('cf-submit');
+        const label = document.getElementById('cf-submit-label');
+        const errorEl = document.getElementById('cf-error');
+
+        // Basic validation
+        const email = document.getElementById('cf-email').value.trim();
+        const name = document.getElementById('cf-name').value.trim();
+        if (!name || !email) {
+          errorEl.textContent = 'Por favor completá tu nombre y email.';
+          errorEl.classList.remove('hidden');
+          return;
+        }
+        errorEl.classList.add('hidden');
+
+        // Simulate send
+        btn.disabled = true;
+        label.textContent = 'Enviando...';
+        setTimeout(() => {
+          document.getElementById('contact-form').classList.add('hidden');
+          document.getElementById('contact-success').classList.remove('hidden');
+        }, 800);
+      });
+    </script>
+  </body>
+</html>
