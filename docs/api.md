@@ -114,6 +114,31 @@ Place a new order from the current cart.
 
 ---
 
+## GET /api/v1/preferences
+
+Returns saved user preferences.
+
+**Response data:**
+```json
+{
+  "preferences": {
+    "preferred_brands": { "leche": "La Serenísima" },
+    "excluded_categories": ["bebidas alcohólicas"],
+    "notes": "string"
+  },
+  "updated_at": "iso8601 | null"
+}
+```
+
+## PUT /api/v1/preferences
+
+Save or replace user preferences.
+
+**Request:** `{ "preferences": { ...prefs object... } }`
+**Response data:** `{ "preferences": { ...saved prefs... } }`
+
+---
+
 ## POST /api/v1/monthly-plan (V4)
 
 Save or update recurring monthly shopping configuration.

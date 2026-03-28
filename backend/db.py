@@ -3,11 +3,14 @@ SQLite helpers — schema init and connection factory.
 Owner: Nacho
 
 Tables (V0):
-    users    — registered users
-    sessions — session tokens linked to users
+    users       — registered users
+    sessions    — session tokens linked to users
 
 Tables (V1):
-    orders   — placed orders with cart snapshot and total
+    orders      — placed orders with cart snapshot and total
+
+Tables (V2):
+    preferences — user preference blob (key/value, key='default' until auth lands)
 """
 
 import os
@@ -54,6 +57,12 @@ def init_db() -> None:
             cart_json  TEXT NOT NULL,
             total      REAL NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS preferences (
+            key        TEXT PRIMARY KEY,
+            prefs_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
     """)
     conn.commit()

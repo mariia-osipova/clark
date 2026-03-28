@@ -1,10 +1,12 @@
 """
-Tests for Nacho's V1 backend tasks:
+Tests for Nacho's V1 + V2 backend tasks:
   - envelope() helper
   - _validate_order_cart() — cart validation and price enforcement
   - Order total computation
   - GET/POST /api/v1/orders (integration)
   - GET /api/v1/catalog (integration)
+  - GET/PUT /api/v1/preferences (integration)
+  - _assemble_chat_context() — order history + preferences context
 
 No OpenAI API key required.
 """
@@ -23,7 +25,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from backend.app import _validate_order_cart, envelope
+from backend.app import _validate_order_cart, _assemble_chat_context, envelope
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────────────
@@ -266,3 +268,88 @@ class TestOrdersEndpoint:
         result, status = _post(f"{test_server}/api/v1/nonexistent", {})
         assert status == 404
         assert result["ok"] is False
+
+
+# ─── Integration: preferences endpoint ───────────────────────────────────────
+
+class TestPreferencesEndpoint:
+    def test_get_returns_empty_prefs_by_default(self, test_server):
+        result = _get(f"{test_server}/api/v1/preferences")
+        assert result["ok"] is True
+        assert result["data"]["preferences"] == {}
+
+    def test_put_saves_preferences(self, test_server):
+        prefs = {"notes": "sin gluten", "excluded_categories": ["bebidas alcohólicas"]}
+        result, status = _post(f"{test_server}/api/v1/preferences", {"preferences": prefs})
+        assert result["ok"] is True
+        assert result["data"]["preferences"] == prefs
+
+    def test_get_returns_saved_preferences(self, test_server):
+        prefs = {"notes": "vegano", "preferred_brands": {"leche": "Almond"}}
+        _post(f"{test_server}/api/v1/preferences", {"preferences": prefs})
+        result = _get(f"{test_server}/api/v1/preferences")
+        assert result["data"]["preferences"] == prefs
+
+    def test_put_overwrites_existing_preferences(self, test_server):
+        _post(f"{test_server}/api/v1/preferences", {"preferences": {"notes": "viejo"}})
+        _post(f"{test_server}/api/v1/preferences", {"preferences": {"notes": "nuevo"}})
+        result = _get(f"{test_server}/api/v1/preferences")
+        assert result["data"]["preferences"]["notes"] == "nuevo"
+
+    def test_get_returns_updated_at(self, test_server):
+        _post(f"{test_server}/api/v1/preferences", {"preferences": {}})
+        result = _get(f"{test_server}/api/v1/preferences")
+        assert result["data"]["updated_at"] is not None
+
+    def test_put_invalid_body_returns_400(self, test_server):
+        result, status = _post(f"{test_server}/api/v1/preferences", {"preferences": "not-a-dict"})
+        assert status == 400
+        assert result["ok"] is False
+
+
+# ─── Unit: chat context assembly ─────────────────────────────────────────────
+
+class TestAssembleChatContext:
+    def test_returns_none_when_no_data(self, tmp_path):
+        os.environ["DB_PATH"] = str(tmp_path / "test.db")
+        from backend.db import init_db
+        init_db()
+        result = _assemble_chat_context()
+        assert result is None
+
+    def test_includes_order_history_when_orders_exist(self, tmp_path):
+        os.environ["DB_PATH"] = str(tmp_path / "ctx.db")
+        from backend.db import init_db, get_db
+        init_db()
+        conn = get_db()
+        conn.execute(
+            "INSERT INTO orders (id, cart_json, total) VALUES (?, ?, ?)",
+            ("ord1", '[{"name": "Leche", "quantity": 2}]', 700.0),
+        )
+        conn.commit()
+        conn.close()
+        result = _assemble_chat_context()
+        assert result is not None
+        assert "Leche" in result
+        assert "700.00" in result
+
+    def test_includes_preferences_when_saved(self, tmp_path):
+        os.environ["DB_PATH"] = str(tmp_path / "pref.db")
+        from backend.db import init_db, get_db
+        init_db()
+        conn = get_db()
+        conn.execute(
+            "INSERT INTO preferences (key, prefs_json) VALUES ('default', ?)",
+            ('{"notes": "sin tacc", "excluded_categories": ["lácteos"]}',),
+        )
+        conn.commit()
+        conn.close()
+        result = _assemble_chat_context()
+        assert result is not None
+        assert "sin tacc" in result
+        assert "lácteos" in result
+
+    def test_returns_none_on_missing_db(self, tmp_path):
+        os.environ["DB_PATH"] = str(tmp_path / "nonexistent.db")
+        result = _assemble_chat_context()
+        assert result is None

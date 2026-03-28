@@ -207,6 +207,7 @@ def handle_chat(
     history: list[dict],
     cart: list[dict],
     clarification_response: dict | None = None,
+    context: str | None = None,
 ) -> dict[str, Any]:
     """
     Process a chat turn and return:
@@ -230,6 +231,9 @@ def handle_chat(
             for i in cart
         )
         init_messages.append(SystemMessage(content=cart_text))
+
+    if context:
+        init_messages.append(SystemMessage(content=context))
 
     if clarification_response:
         init_messages.append(SystemMessage(
