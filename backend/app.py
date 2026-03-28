@@ -614,7 +614,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     prefs=plan,
                     order_history=order_history,
                     catalog=catalog,
-                    budget=plan.get("monthly_budget"),
+                    budget=plan.get("monthly_budget") or float("inf"),
                 )
             except (ImportError, AttributeError):
                 # Juan's function not yet available — use rule-based stub
