@@ -29,6 +29,7 @@
           <img class="cart-icon" src="https://c.animaapp.com/ZM2jsSkD/img/cart-icon@2x.png" alt="" aria-hidden="true" />
           <span class="cart-badge hidden" id="cart-badge">0</span>
         </button>
+        <button class="nav-catalog-btn" id="nav-catalog-btn" type="button" aria-label="Ver catálogo">Catálogo</button>
         <a href="#" class="nav-contact">Contact</a>
       </nav>
 
@@ -82,6 +83,17 @@
 
         </div>
       </main>
+
+      <!-- Catalog panel -->
+      <section class="catalog-panel hidden" id="catalog-panel" aria-label="Catálogo de productos">
+        <div class="catalog-toolbar">
+          <input class="catalog-search" id="catalog-search" type="text" placeholder="Buscar productos..." autocomplete="off" />
+          <button class="catalog-close" id="catalog-close" type="button" aria-label="Volver al chat">✕</button>
+        </div>
+        <div class="catalog-grid" id="catalog-grid">
+          <p class="catalog-empty" id="catalog-empty">Cargando catálogo...</p>
+        </div>
+      </section>
 
       <!-- Clarification modal -->
       <div class="modal hidden" id="clarification-modal">
