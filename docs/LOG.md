@@ -2,6 +2,19 @@
 
 Reverse-chronological log of significant events. See [LOGGING.md](LOGGING.md) for how to add entries.
 
+## 2026-03-28 — Juan — PR #12 review: fix execute_checkout error handling
+
+**Type:** bugfix
+
+Reviewed PR #12 (`feature/checkout-forgotten-items`) before merging to main. Full review confirmed:
+- All new graph nodes are deterministic and correct
+- `place_order()` is atomic (BEGIN EXCLUSIVE transaction)
+- Profile file writes are atomic (temp file + rename)
+- All 11 product IDs in cart_profiles match DEMO_CATALOG
+- Cart profile load is additive by design (users can stack multiple profiles)
+
+One bug fixed: `execute_checkout` had no try/except around `db_place_order()`. A DB failure would crash the graph instead of returning a graceful error. Fixed with try/except returning `{"error": "No se pudo confirmar el pedido: ..."}`.
+
 ## 2026-03-28 — Nacho — VERSION4: V4 Robustness Rebuild complete
 
 **Type:** feature + bugfix

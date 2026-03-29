@@ -62,6 +62,7 @@ def _empty_profile() -> dict[str, Any]:
             "auto_pick_suggestions": False,
             "verbosity": "normal",
         },
+        "cart_profiles": {},
     }
 
 
@@ -70,3 +71,28 @@ def reset_profile_cache() -> None:
     global _profile_cache, _profile_mtime
     _profile_cache = None
     _profile_mtime = 0.0
+
+
+def get_cart_profiles() -> dict[str, list[dict]]:
+    """Return the cart_profiles section of the user profile, or {} if absent."""
+    return get_user_profile().get("cart_profiles", {})
+
+
+def save_cart_profiles(profiles: dict[str, list[dict]]) -> None:
+    """Atomically write the cart_profiles section to user_profile.json.
+
+    Reads the current file, updates the cart_profiles key, then writes to a
+    temp file and renames it into place (atomic on Linux/macOS).
+    Invalidates the mtime-based cache so the next get_user_profile() reloads.
+    """
+    try:
+        with open(PROFILE_PATH) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = _empty_profile()
+    data["cart_profiles"] = profiles
+    tmp = PROFILE_PATH.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    tmp.replace(PROFILE_PATH)
+    reset_profile_cache()

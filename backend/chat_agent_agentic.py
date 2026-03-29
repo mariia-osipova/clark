@@ -119,6 +119,15 @@ class ShopState(TypedDict):
     pending_clarification: dict | None   # issued to client; persisted in SqliteSaver
     reply: str
 
+    # Checkout output
+    forgotten_suggestion: dict | None    # {product_id, name, quantity, price, days_ago}
+    checkout_result: dict | None         # {order_id, total, item_count} or {error: str}
+    checkout_nudge_shown: bool           # True after nudge fires once — skip on subsequent checkout turns
+
+    # Cart profile output
+    profile_name: str                    # extracted by classifier; "" for non-profile turns
+    profile_action_result: dict | None   # {status, profile_name, loaded_items?, available_profiles?}
+
     # User context — loaded from data/user_profile.json, read-only inside graph
     user_profile: dict
 
@@ -373,11 +382,14 @@ def _read_session_cart(session_id: str, catalog: list[dict]) -> list[dict]:
 
 _CLASSIFY_SYSTEM = (
     "Sos un asistente de compras. Analizá el mensaje del usuario y respondé SOLO con JSON:\n"
-    '{"turn_kind": "shopping|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection", '
-    '"planned_items": [{"query": "nombre producto", "quantity": 1}]}\n'
+    '{"turn_kind": "shopping|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection|checkout|save_cart_profile|load_cart_profile", '
+    '"planned_items": [{"query": "nombre producto", "quantity": 1}], "profile_name": ""}\n'
     "Para mensajes que NO son compras (saludos, preguntas generales), usá turn_kind=smalltalk "
     "y planned_items=[].\n"
     'Para generar canasta mensual, usá turn_kind=monthly_basket y planned_items=[].\n'
+    "Para mensajes donde el usuario quiere confirmar/finalizar su compra, hacer checkout o pagar "
+    "su carrito (ej: 'confirmar pedido', 'comprar carrito', 'finalizar compra', 'checkout', 'pagar', "
+    "'quiero pagar', 'proceder con el pago'), usá turn_kind=checkout y planned_items=[].\n"
     "REGLA SUGERENCIAS: Si el último mensaje del asistente ofreció alternativas o sugerencias "
     "para un producto que no se encontró:\n"
     "- Si el usuario ACEPTA (sí, dale, ok, quiero la primera, agregá esa, etc.) o elige una opción "
@@ -420,7 +432,19 @@ _CLASSIFY_SYSTEM = (
     'Sugerencia con elección → {"turn_kind":"suggestion_reply","planned_items":[{"query":"helado de chocolate","quantity":1}]}\n'
     "\n"
     '"eso no es helado" / "no, busco otra cosa" → '
-    '{"turn_kind":"suggestion_rejection","planned_items":[]}\n'
+    '{"turn_kind":"suggestion_rejection","planned_items":[],"profile_name":""}\n'
+    "\n"
+    "REGLA PERFILES DE CARRITO:\n"
+    "- Si el usuario quiere guardar su carrito con un nombre "
+    "(ej: 'guardá este carrito como compra semanal', 'salvá mi carrito como despensa') "
+    "→ turn_kind=save_cart_profile, profile_name=<nombre extraído>, planned_items=[].\n"
+    "- Si el usuario quiere cargar un perfil guardado "
+    "(ej: 'cargá mi perfil compra semanal', 'usá mi lista de siempre', 'cargá despensa') "
+    "→ turn_kind=load_cart_profile, profile_name=<nombre extraído>, planned_items=[].\n"
+    "- En todos los demás casos, profile_name debe ser \"\" (string vacío).\n"
+    "\n"
+    'Guardar perfil → {"turn_kind":"save_cart_profile","planned_items":[],"profile_name":"compra semanal"}\n'
+    'Cargar perfil → {"turn_kind":"load_cart_profile","planned_items":[],"profile_name":"compra semanal"}\n'
     "\n"
     'Necesidad descriptiva → "algo para tomar mate" → '
     '{"turn_kind":"shopping","planned_items":[{"query":"yerba mate","quantity":1}]}\n'
@@ -474,6 +498,7 @@ def _build_graph(catalog: list[dict], api_key: str):
             return {
                 "turn_kind": parsed.get("turn_kind", "smalltalk"),
                 "planned_items": planned_items,
+                "profile_name": str(parsed.get("profile_name", "") or "").strip(),
             }
         except Exception:
             _log.exception("classify_turn failed, defaulting to smalltalk")
@@ -699,6 +724,36 @@ def _build_graph(catalog: list[dict], api_key: str):
         if pending:
             return {"reply": pending["question"]}
 
+        # Deterministic node already wrote reply (profile save/load, etc.) — don't overwrite
+        if state.get("reply"):
+            return {}
+
+        # Forgotten item suggestion — deterministic, no LLM needed
+        suggestion = state.get("forgotten_suggestion")
+        if suggestion:
+            days_ago = suggestion.get("days_ago", 0)
+            day_str = "ayer" if days_ago <= 1 else f"hace {days_ago} días"
+            name = suggestion.get("name", "ese producto")
+            qty = suggestion.get("quantity", 1)
+            return {"reply": (
+                f"¡Espera! {day_str} compraste {name} (x{qty}) y no está en tu carrito. "
+                f"¿Lo agregamos antes de confirmar, o seguimos sin él?"
+            )}
+
+        # Checkout confirmed — deterministic, no LLM needed
+        checkout_result = state.get("checkout_result")
+        if checkout_result:
+            if checkout_result.get("error"):
+                return {"reply": checkout_result["error"]}
+            order_id = checkout_result.get("order_id", "")
+            total = checkout_result.get("total", 0.0)
+            item_count = checkout_result.get("item_count", 0)
+            s = "s" if item_count != 1 else ""
+            return {"reply": (
+                f"¡Listo! Tu pedido fue confirmado. "
+                f"Orden #{order_id} — {item_count} producto{s} por ${total:.2f}. ¡Gracias por tu compra!"
+            )}
+
         added = [r for r in (state.get("resolutions") or []) if r.get("status") == "resolved"]
         missing = state.get("missing_items") or []
 
@@ -765,6 +820,199 @@ def _build_graph(catalog: list[dict], api_key: str):
             result["last_suggestions"] = suggestions
         return result
 
+    # ── Node: check_forgotten_items ───────────────────────────────────────────
+    def check_forgotten_items(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Compares current cart against last order.
+        Fires the nudge at most once per session — if checkout_nudge_shown is True,
+        skip straight to execute_checkout.
+        """
+        from datetime import datetime
+        from backend.db import get_last_order
+
+        # Nudge already shown this session — don't repeat it
+        if state.get("checkout_nudge_shown"):
+            return {"forgotten_suggestion": None}
+
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        current_cart = _read_session_cart(sid, catalog)
+        current_ids = {item["product_id"] for item in current_cart}
+
+        last_order = get_last_order()
+        if not last_order or not last_order.get("cart"):
+            return {"forgotten_suggestion": None}
+
+        missing = [
+            item for item in last_order["cart"]
+            if item.get("product_id") not in current_ids
+        ]
+        if not missing:
+            return {"forgotten_suggestion": None}
+
+        forgotten = missing[0]
+        try:
+            order_dt = datetime.strptime(last_order["created_at"][:19], "%Y-%m-%d %H:%M:%S")
+            days_ago = (datetime.utcnow() - order_dt).days
+        except Exception:
+            days_ago = 0
+
+        return {
+            "forgotten_suggestion": {
+                "product_id": forgotten.get("product_id", ""),
+                "name": forgotten.get("name", ""),
+                "quantity": forgotten.get("quantity", 1),
+                "price": forgotten.get("price", 0.0),
+                "days_ago": days_ago,
+            },
+            "checkout_nudge_shown": True,   # mark as shown so it won't repeat
+        }
+
+    # ── Node: execute_checkout ─────────────────────────────────────────────────
+    def execute_checkout(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Places the order using db.place_order().
+        Only reached when forgotten_suggestion is None.
+        """
+        from backend.db import place_order as db_place_order
+
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        current_cart = _read_session_cart(sid, catalog)
+
+        if not current_cart:
+            return {"checkout_result": {"error": "El carrito está vacío."}}
+
+        total = round(sum(item["price"] * item["quantity"] for item in current_cart), 2)
+        order_id = str(uuid.uuid4())[:8]
+        try:
+            db_place_order(sid, order_id, current_cart, total)
+        except Exception as exc:
+            return {"checkout_result": {"error": f"No se pudo confirmar el pedido: {exc}"}}
+
+        return {
+            "checkout_result": {
+                "order_id": order_id,
+                "total": total,
+                "item_count": len(current_cart),
+            }
+        }
+
+    # ── Node: save_cart_profile_node ──────────────────────────────────────────
+    def save_cart_profile_node(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Saves the current cart under profile_name in user_profile.json."""
+        from backend.user_profile import get_cart_profiles, save_cart_profiles
+
+        name = (state.get("profile_name") or "").strip()
+        if not name:
+            return {
+                "reply": "No entendí el nombre del perfil. Decime cómo querés guardarlo, "
+                         "por ejemplo: 'guardá este carrito como compra semanal'.",
+                "profile_action_result": {"status": "error", "profile_name": ""},
+            }
+
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        current_cart = _read_session_cart(sid, catalog)
+
+        if not current_cart:
+            return {
+                "reply": "El carrito está vacío. Agregá productos antes de guardar un perfil.",
+                "profile_action_result": {"status": "empty_cart", "profile_name": name},
+            }
+
+        minimal_items = [
+            {"product_id": item["product_id"], "quantity": item["quantity"]}
+            for item in current_cart
+        ]
+        profiles = get_cart_profiles()
+        profiles[name] = minimal_items
+        save_cart_profiles(profiles)
+
+        count = len(minimal_items)
+        s = "s" if count != 1 else ""
+        return {
+            "reply": f"Perfil '{name}' guardado con {count} producto{s}. "
+                     f"Podés cargarlo cuando quieras con 'cargá mi perfil {name}'.",
+            "profile_action_result": {"status": "saved", "profile_name": name},
+        }
+
+    # ── Node: load_cart_profile_node ──────────────────────────────────────────
+    def load_cart_profile_node(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Loads a saved cart profile by name into the session cart."""
+        import unicodedata
+        from backend.user_profile import get_cart_profiles
+
+        def _normalize(s: str) -> str:
+            s = s.lower().strip()
+            return "".join(
+                c for c in unicodedata.normalize("NFD", s)
+                if unicodedata.category(c) != "Mn"
+            )
+
+        requested = (state.get("profile_name") or "").strip()
+        if not requested:
+            return {
+                "reply": "No entendí qué perfil querés cargar. Decime el nombre, "
+                         "por ejemplo: 'cargá mi perfil compra semanal'.",
+                "profile_action_result": {"status": "error", "profile_name": ""},
+            }
+
+        profiles = get_cart_profiles()
+        norm_req = _normalize(requested)
+        matched_key = next((k for k in profiles if _normalize(k) == norm_req), None)
+
+        if matched_key is None:
+            available = list(profiles.keys())
+            if available:
+                names_str = ", ".join(f"'{n}'" for n in available)
+                reply = (f"No encontré un perfil llamado '{requested}'. "
+                         f"Tus perfiles guardados son: {names_str}.")
+            else:
+                reply = (f"No encontré un perfil llamado '{requested}' "
+                         f"y no tenés perfiles guardados todavía.")
+            return {
+                "reply": reply,
+                "profile_action_result": {
+                    "status": "not_found",
+                    "profile_name": requested,
+                    "available_profiles": available,
+                },
+            }
+
+        saved_items = profiles[matched_key]
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        catalog_by_id = {p["id"]: p for p in catalog}
+
+        valid_items: list[tuple[str, int]] = []
+        dropped = 0
+        for entry in saved_items:
+            pid = entry.get("product_id", "")
+            product = catalog_by_id.get(pid)
+            if product and product.get("available_quantity", 1) > 0:
+                valid_items.append((pid, entry.get("quantity", 1)))
+            else:
+                dropped += 1
+
+        if valid_items:
+            _write_session_cart_items(sid, valid_items)
+
+        count = len(valid_items)
+        s = "s" if count != 1 else ""
+
+        if not valid_items:
+            reply = (f"Cargué el perfil '{matched_key}' pero ningún producto "
+                     f"está disponible en el catálogo ahora mismo.")
+        elif dropped:
+            reply = (f"Perfil '{matched_key}' cargado. Agregué {count} producto{s} al carrito. "
+                     f"{dropped} producto{'s' if dropped != 1 else ''} no estaba{'n' if dropped != 1 else ''} disponible{'s' if dropped != 1 else ''}.")
+        else:
+            reply = f"Perfil '{matched_key}' cargado. Agregué {count} producto{s} al carrito."
+
+        return {
+            "reply": reply,
+            "profile_action_result": {
+                "status": "loaded",
+                "profile_name": matched_key,
+                "loaded_items": count,
+            },
+        }
+
     # ── Routing ────────────────────────────────────────────────────────────────
     def route_after_classify(state: ShopState) -> str:
         turn_kind = state.get("turn_kind", "smalltalk")
@@ -774,7 +1022,16 @@ def _build_graph(catalog: list[dict], api_key: str):
             return "accept_suggestion"
         if turn_kind == "suggestion_rejection":
             return "reject_suggestion"
+        if turn_kind == "checkout":
+            return "check_forgotten_items"
+        if turn_kind == "save_cart_profile":
+            return "save_cart_profile_node"
+        if turn_kind == "load_cart_profile":
+            return "load_cart_profile_node"
         return "resolve_items"
+
+    def route_after_forgotten_check(state: ShopState) -> str:
+        return "summarize" if state.get("forgotten_suggestion") is not None else "execute_checkout"
 
     def route_after_apply(state: ShopState) -> str:
         if any(r.get("status") == "needs_clarification" for r in (state.get("resolutions") or [])):
@@ -789,6 +1046,10 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_node("reject_suggestion", reject_suggestion)
     graph.add_node("apply_cart", apply_cart)
     graph.add_node("emit_clarification", emit_clarification)
+    graph.add_node("check_forgotten_items", check_forgotten_items)
+    graph.add_node("execute_checkout", execute_checkout)
+    graph.add_node("save_cart_profile_node", save_cart_profile_node)
+    graph.add_node("load_cart_profile_node", load_cart_profile_node)
     graph.add_node("summarize", summarize)
 
     graph.add_edge(START, "classify_turn")
@@ -798,6 +1059,10 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_edge("reject_suggestion", "summarize")  # skip cart — nothing to add
     graph.add_conditional_edges("apply_cart", route_after_apply)
     graph.add_edge("emit_clarification", "summarize")
+    graph.add_conditional_edges("check_forgotten_items", route_after_forgotten_check)
+    graph.add_edge("execute_checkout", "summarize")
+    graph.add_edge("save_cart_profile_node", "summarize")
+    graph.add_edge("load_cart_profile_node", "summarize")
     graph.add_edge("summarize", END)
 
     return graph.compile(checkpointer=_get_checkpointer())
@@ -1070,14 +1335,17 @@ def handle_chat(
         }
 
     # ── Normal turn ────────────────────────────────────────────────────────────
-    # Retrieve last_suggestions from prior state so suggestion_reply can reference them
+    # Retrieve persisted fields from prior state
     prior_suggestions: list[dict] = []
+    prior_nudge_shown: bool = False
     if session_id:
         try:
             prior_state = app.get_state(config)
             prior_suggestions = prior_state.values.get("last_suggestions") or []
+            prior_nudge_shown = bool(prior_state.values.get("checkout_nudge_shown", False))
         except Exception:
             prior_suggestions = []
+            prior_nudge_shown = False
 
     invoke_input: dict = {
         "raw_message": message,
@@ -1090,6 +1358,11 @@ def handle_chat(
         "last_suggestions": prior_suggestions,
         "pending_clarification": None,
         "reply": "",
+        "forgotten_suggestion": None,
+        "checkout_result": None,
+        "checkout_nudge_shown": prior_nudge_shown,
+        "profile_name": "",
+        "profile_action_result": None,
         "session_id": session_id,
         "initial_cart": initial_cart,
         "history": _trim_history(history),
@@ -1116,4 +1389,5 @@ def handle_chat(
         "clarification": clarification,
         "missing_items": final_state.get("missing_items") or [],
         "suggestions": final_state.get("suggestions") or [],
+        "checkout_result": final_state.get("checkout_result"),
     }
