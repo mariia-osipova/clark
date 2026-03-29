@@ -76,6 +76,7 @@ async function sendChat() {
       setCart(cart);
     } else if (proposed_cart && proposed_cart.length > 0) {
       setCart(proposed_cart);
+      syncCartToServer(proposed_cart);
     }
   } catch (err) {
     loadingEl.remove();
@@ -348,6 +349,16 @@ async function checkout() {
   } finally {
     btn.disabled = false;
   }
+}
+
+async function syncCartToServer(items) {
+  try {
+    await fetch(`${API}/cart/sync`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ items: items.map(i => ({ product_id: i.product_id, quantity: i.quantity })) }),
+    });
+  } catch (_) { /* best-effort */ }
 }
 
 function loadCart() {
