@@ -382,7 +382,7 @@ def _read_session_cart(session_id: str, catalog: list[dict]) -> list[dict]:
 
 _CLASSIFY_SYSTEM = (
     "Sos un asistente de compras. Analizá el mensaje del usuario y respondé SOLO con JSON:\n"
-    '{"turn_kind": "shopping|remove|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection|checkout|save_cart_profile|load_cart_profile", '
+    '{"turn_kind": "shopping|remove|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection|checkout|save_cart_profile|load_cart_profile|show_last_order", '
     '"planned_items": [{"query": "nombre producto", "quantity": 1}], "profile_name": ""}\n'
     "Para mensajes que NO son compras (saludos, preguntas generales), usá turn_kind=smalltalk "
     "y planned_items=[].\n"
@@ -441,6 +441,9 @@ _CLASSIFY_SYSTEM = (
     "- Si el usuario quiere cargar un perfil guardado "
     "(ej: 'cargá mi perfil compra semanal', 'usá mi lista de siempre', 'cargá despensa') "
     "→ turn_kind=load_cart_profile, profile_name=<nombre extraído>, planned_items=[].\n"
+    "- Si el usuario quiere ver o repetir su último pedido "
+    "(ej: 'mostrar mi último pedido', 'repetir último pedido', 'qué compré la última vez', 'cargá mi último pedido') "
+    "→ turn_kind=show_last_order, planned_items=[].\n"
     "- En todos los demás casos, profile_name debe ser \"\" (string vacío).\n"
     "\n"
     'Guardar perfil → {"turn_kind":"save_cart_profile","planned_items":[],"profile_name":"compra semanal"}\n'
@@ -876,7 +879,7 @@ def _build_graph(catalog: list[dict], api_key: str):
         Fires the nudge at most once per session — if checkout_nudge_shown is True,
         skip straight to execute_checkout.
         """
-        # TODO: re-enable when ready for demo
+        # TODO: re-enable when session_id consistency between turns is confirmed
         return {"forgotten_suggestion": None}
 
         # Nudge already shown this session — don't repeat it
@@ -1072,6 +1075,46 @@ def _build_graph(catalog: list[dict], api_key: str):
             },
         }
 
+    # ── Node: show_last_order_node ────────────────────────────────────────────
+    def show_last_order_node(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Loads items from the most recent DB order into the session cart."""
+        from backend.db import get_last_order
+
+        last = get_last_order()
+        if not last or not last.get("cart"):
+            return {"reply": "No encontré ningún pedido anterior."}
+
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        catalog_by_id = {p["id"]: p for p in catalog}
+
+        valid_items: list[tuple[str, int]] = []
+        dropped = 0
+        for entry in last["cart"]:
+            pid = entry.get("product_id", "")
+            product = catalog_by_id.get(pid)
+            if product and product.get("available_quantity", 1) > 0:
+                valid_items.append((pid, entry.get("quantity", 1)))
+            else:
+                dropped += 1
+
+        if valid_items:
+            _write_session_cart_items(sid, valid_items)
+
+        count = len(valid_items)
+        s = "s" if count != 1 else ""
+        date_str = (last.get("created_at") or "")[:10]
+        date_part = f" del {date_str}" if date_str else ""
+
+        if not valid_items:
+            reply = f"Cargué tu último pedido{date_part} pero ningún producto está disponible ahora."
+        elif dropped:
+            reply = (f"Último pedido{date_part} cargado. Agregué {count} producto{s} al carrito "
+                     f"({dropped} no disponible{'s' if dropped != 1 else ''}).")
+        else:
+            reply = f"Último pedido{date_part} cargado. Agregué {count} producto{s} al carrito."
+
+        return {"reply": reply}
+
     # ── Routing ────────────────────────────────────────────────────────────────
     def route_after_classify(state: ShopState) -> str:
         turn_kind = state.get("turn_kind", "smalltalk")
@@ -1089,6 +1132,8 @@ def _build_graph(catalog: list[dict], api_key: str):
             return "save_cart_profile_node"
         if turn_kind == "load_cart_profile":
             return "load_cart_profile_node"
+        if turn_kind == "show_last_order":
+            return "show_last_order_node"
         return "resolve_items"
 
     def route_after_forgotten_check(state: ShopState) -> str:
@@ -1112,6 +1157,7 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_node("remove_items_node", remove_items_node)
     graph.add_node("save_cart_profile_node", save_cart_profile_node)
     graph.add_node("load_cart_profile_node", load_cart_profile_node)
+    graph.add_node("show_last_order_node", show_last_order_node)
     graph.add_node("summarize", summarize)
 
     graph.add_edge(START, "classify_turn")
@@ -1126,6 +1172,7 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_edge("remove_items_node", "summarize")
     graph.add_edge("save_cart_profile_node", "summarize")
     graph.add_edge("load_cart_profile_node", "summarize")
+    graph.add_edge("show_last_order_node", "summarize")
     graph.add_edge("summarize", END)
 
     return graph.compile(checkpointer=_get_checkpointer())

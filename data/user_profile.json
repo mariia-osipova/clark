@@ -1,19 +1,16 @@
 {
   "_schema_version": 1,
   "_doc": "Demo user — Jaime. Hardcoded for hackathon demo. Product IDs reference data/catalog_snapshot.json.",
-
   "identity": {
     "name": "Jaime",
     "locale": "es-AR"
   },
-
   "household": {
     "size": 1,
     "has_children": false,
     "has_pets": false,
     "dietary_restrictions": []
   },
-
   "preferences": {
     "preferred_brands": {
       "lácteos": "La Serenísima"
@@ -23,30 +20,77 @@
     "budget_monthly": 15000,
     "strict_brand": false
   },
-
   "purchase_history": {
-    "frequent_items": ["720719", "758014", "495133", "736162"],
-    "last_order_date": "2026-03-14 12:00:00",
+    "frequent_items": [
+      "720719",
+      "758014",
+      "495133",
+      "736162"
+    ],
+    "last_order_date": "2026-03-15 02:57:01",
+    "last_order": [
+      { "product_id": "720719", "quantity": 1 },
+      { "product_id": "758014", "quantity": 1 },
+      { "product_id": "495133", "quantity": 1 },
+      { "product_id": "736162", "quantity": 1 }
+    ],
     "avg_cart_size": 3,
     "shopping_frequency_days": 14
   },
-
   "interaction": {
     "auto_pick_suggestions": false,
     "verbosity": "normal"
   },
-
   "cart_profiles": {
     "desayuno": [
-      {"product_id": "720719", "quantity": 1},
-      {"product_id": "758014", "quantity": 1},
-      {"product_id": "495133", "quantity": 1}
+      {
+        "product_id": "720719",
+        "quantity": 1
+      },
+      {
+        "product_id": "758014",
+        "quantity": 1
+      },
+      {
+        "product_id": "495133",
+        "quantity": 1
+      }
     ],
     "despensa": [
-      {"product_id": "718787", "quantity": 1},
-      {"product_id": "726311", "quantity": 1},
-      {"product_id": "699030", "quantity": 1},
-      {"product_id": "669429", "quantity": 1}
+      {
+        "product_id": "718787",
+        "quantity": 1
+      },
+      {
+        "product_id": "726311",
+        "quantity": 1
+      },
+      {
+        "product_id": "699030",
+        "quantity": 1
+      },
+      {
+        "product_id": "669429",
+        "quantity": 1
+      }
+    ],
+    "plus": [
+      {
+        "product_id": "495133",
+        "quantity": 1
+      },
+      {
+        "product_id": "720719",
+        "quantity": 1
+      },
+      {
+        "product_id": "758014",
+        "quantity": 1
+      },
+      {
+        "product_id": "767827",
+        "quantity": 1
+      }
     ]
   }
 }
