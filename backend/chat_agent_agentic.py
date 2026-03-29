@@ -870,7 +870,10 @@ def _build_graph(catalog: list[dict], api_key: str):
 
         total = round(sum(item["price"] * item["quantity"] for item in current_cart), 2)
         order_id = str(uuid.uuid4())[:8]
-        db_place_order(sid, order_id, current_cart, total)
+        try:
+            db_place_order(sid, order_id, current_cart, total)
+        except Exception as exc:
+            return {"checkout_result": {"error": f"No se pudo confirmar el pedido: {exc}"}}
 
         return {
             "checkout_result": {
