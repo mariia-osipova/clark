@@ -390,7 +390,7 @@ function bindDemoChips() {
   const chips = document.getElementById('demo-chips');
   if (!chips) return;
   chips.addEventListener('click', e => {
-    const chip = e.target.closest('.demo-chip');
+    const chip = e.target.closest('[data-msg]');
     if (!chip) return;
     const msg = chip.dataset.msg;
     if (!msg) return;
@@ -398,7 +398,6 @@ function bindDemoChips() {
     sendChat();
   });
 }
-
 
 // ─── Audio (STT via Whisper) ──────────────────────────────────────────────────
 
@@ -451,7 +450,7 @@ function stopRecording() {
     audioState.recording = false;
     const btn = document.getElementById('btn-mic');
     btn.classList.remove('btn--recording');
-    btn.textContent = '🎤';
+    btn.innerHTML = '<img src="pics/microf.png" alt="" class="chat-icon-img" />';
     btn.title = 'Grabar mensaje de voz';
   }
 }
@@ -477,7 +476,7 @@ async function transcribeAudio(blob) {
     appendChatMsg('assistant', `Error al transcribir audio: ${err.message}`);
   } finally {
     micBtn.disabled = false;
-    micBtn.textContent = '🎤';
+    micBtn.innerHTML = '<img src="pics/microf.png" alt="" class="chat-icon-img" />';
   }
 }
 
@@ -524,6 +523,6 @@ async function describeImage(file) {
     appendChatMsg('assistant', `Error al procesar la imagen: ${err.message}`);
   } finally {
     imgBtn.disabled = false;
-    imgBtn.textContent = '📷';
+    imgBtn.innerHTML = '<img src="pics/cam.png" alt="" class="chat-icon-img" />';
   }
 }

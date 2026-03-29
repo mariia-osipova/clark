@@ -159,9 +159,9 @@
   justify-content: center;
   gap: 20px;
   padding: 80px 40px 60px;
-  background-image: url("pics/Group%201-1.png");
-  background-size: var(--como-bg-size);
-  background-position: var(--como-bg-position);
+  background-image: image-set(url("pics/grid.webp") type("image/webp"), url("pics/Group%201-1.png") type("image/png"));
+  background-size: cover;
+  background-position: center center;
   will-change: transform;
 }
 
@@ -178,7 +178,7 @@
   font-size: clamp(2rem, 5vw, 64px);
   line-height: 1.1;
   letter-spacing: -1px;
-  color: var(--textbody-1);
+  color: #000000;
   text-align: center;
   margin: 0;
 }

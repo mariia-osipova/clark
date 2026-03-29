@@ -21,23 +21,19 @@
             <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L13.5 13.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </button>
         </div>
-        <a href="catalog.html" class="nav-icon-btn" aria-label="Ver catálogo">
-          <svg width="19" height="19" viewBox="0 0 19 19" fill="none" aria-hidden="true"><rect x="1" y="1" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="11" y="1" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="11" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="11" y="11" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
-        </a>
-        <button class="nav-icon-btn" type="button" aria-label="Chat">
-          <img class="img" src="https://c.animaapp.com/ZM2jsSkD/img/chat-icon-1@2x.png" alt="" aria-hidden="true" />
-        </button>
-        <button class="nav-icon-btn" type="button" aria-label="Perfil">
-          <img class="profile-icon" src="https://c.animaapp.com/ZM2jsSkD/img/profile-icon@2x.png" alt="" aria-hidden="true" />
-        </button>
-        <button class="nav-icon-btn" type="button" aria-label="Favoritos">
-          <img class="img" src="https://c.animaapp.com/ZM2jsSkD/img/icon-of-favorites@2x.png" alt="" aria-hidden="true" />
-        </button>
-        <button class="nav-cart-btn" id="nav-cart-btn" aria-label="Ver carrito">
-          <img class="cart-icon" src="https://c.animaapp.com/ZM2jsSkD/img/cart-icon@2x.png" alt="" aria-hidden="true" />
-          <span class="cart-badge hidden" id="cart-badge">0</span>
-        </button>
-<a href="#" class="nav-contact">Contact</a>
+        <div class="nav-icon-group">
+          <a href="catalog.html" class="nav-icon-btn" aria-label="Ver catálogo">
+            <img class="catalog-nav-icon" src="pics/Group 29.png" alt="" aria-hidden="true" />
+          </a>
+          <button class="nav-icon-btn" type="button" aria-label="Chat">
+            <img class="img" src="https://c.animaapp.com/ZM2jsSkD/img/chat-icon-1@2x.png" alt="" aria-hidden="true" />
+          </button>
+          <button class="nav-cart-btn" id="nav-cart-btn" aria-label="Ver carrito">
+            <img class="cart-icon" src="https://c.animaapp.com/ZM2jsSkD/img/cart-icon@2x.png" alt="" aria-hidden="true" />
+            <span class="cart-badge hidden" id="cart-badge">0</span>
+          </button>
+          <a href="contacto.html" class="nav-contact">Contact</a>
+        </div>
       </nav>
 
       <!-- Chat area -->
@@ -50,12 +46,11 @@
             <div class="chat-thread-wrapper">
               <div class="chat-empty-state" id="chat-empty">
                 <h1 class="heading">Hola, Jaime 👋</h1>
-                <div class="demo-chips" id="demo-chips">
-                  <button class="demo-chip" data-msg="Cargá mi perfil desayuno">📦 Cargar desayuno</button>
-                  <button class="demo-chip" data-msg="Cargá mi perfil despensa">🗂 Cargar despensa</button>
-                  <button class="demo-chip" data-msg="Guardá este carrito como mi lista">💾 Guardar carrito</button>
-                  <button class="demo-chip" data-msg="Confirmar pedido">✅ Confirmar pedido</button>
-                  <button class="demo-chip" data-msg="Generá mi canasta mensual">📅 Canasta mensual</button>
+                <div class="button-row" id="demo-chips">
+                  <button class="button-primary-like" data-msg="Cargá mi perfil desayuno">📦 Cargar desayuno</button>
+                  <button class="button-primary-like" data-msg="Cargá mi perfil despensa">🗂 Cargar despensa</button>
+                  <button class="button-primary-like" data-msg="Guardá este carrito como mi lista">💾 Guardar carrito</button>
+                  <button class="button-primary-like" data-msg="Generá mi canasta mensual">📅 Canasta mensual</button>
                 </div>
               </div>
               <div class="chat-thread" id="chat-thread"></div>
@@ -63,8 +58,12 @@
 
             <!-- Input bar -->
             <div class="chat-input-bar">
-              <button class="chat-input-icon-btn" id="btn-mic" title="Grabar mensaje de voz" aria-label="Grabar mensaje de voz">🎤</button>
-              <button class="chat-input-icon-btn" id="btn-image" title="Subir foto o lista manuscrita" aria-label="Subir imagen">📷</button>
+              <button class="chat-input-icon-btn" id="btn-mic" title="Grabar mensaje de voz" aria-label="Grabar mensaje de voz">
+                <img src="pics/microf.png" alt="" class="chat-icon-img" />
+              </button>
+              <button class="chat-input-icon-btn" id="btn-image" title="Subir foto o lista manuscrita" aria-label="Subir imagen">
+                <img src="pics/cam.png" alt="" class="chat-icon-img" />
+              </button>
               <input type="file" id="image-file-input" accept="image/jpeg,image/png,image/gif,image/webp" style="display:none" aria-hidden="true" />
               <label for="chat-input" class="sr-only">Escribe tu pedido</label>
               <input
@@ -75,7 +74,7 @@
                 autocomplete="off"
               />
               <button class="chat-submit" id="btn-send" type="button" aria-label="Enviar">
-                <img class="chat-submit-icon" src="https://c.animaapp.com/ZM2jsSkD/img/vector1-1@2x.png" alt="Enviar" />
+                <img class="chat-submit-icon" src="pics/Vector12.png" alt="Enviar" />
               </button>
             </div>
           </div>
@@ -91,7 +90,7 @@
             </div>
             <div class="cart-footer hidden" id="cart-footer">
               <div class="cart-total">Total: <span id="cart-total">$0.00</span></div>
-              <button class="cart-checkout" id="btn-checkout">Confirmar pedido</button>
+              <button class="cart-checkout button-primary-like" id="btn-checkout">Confirmar pedido</button>
             </div>
           </aside>
 
@@ -110,7 +109,7 @@
             </fieldset>
             <p class="modal__error hidden" id="modal-error" aria-live="polite"></p>
             <div class="modal__actions">
-              <button class="modal-btn modal-btn--primary" id="modal-confirm" type="submit" disabled>Confirmar</button>
+              <button class="modal-btn modal-btn--primary button-primary-like" id="modal-confirm" type="submit" disabled>Confirmar</button>
               <button class="modal-btn modal-btn--secondary" id="modal-cancel" type="button">Cancelar</button>
             </div>
           </form>

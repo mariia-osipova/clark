@@ -12,7 +12,7 @@ import sys
 import uuid
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlparse, unquote
 
 from backend.db import (
     get_db,
@@ -860,7 +860,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         if path == "/" or path == "":
             path = "/index.html"
         frontend_root = (ROOT / "frontend").resolve()
-        file_path = (frontend_root / path.lstrip("/")).resolve()
+        file_path = (frontend_root / unquote(path.lstrip("/"))).resolve()
         try:
             file_path.relative_to(frontend_root)
         except ValueError:

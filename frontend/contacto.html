@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="utf-8" />
+    <title>Clark — Contacto</title>
+    <link rel="icon" type="image/png" href="https://c.animaapp.com/Y5zUzjcR/img/group-23@6x.png" />
+    <link rel="stylesheet" href="globals.css" />
+    <link rel="stylesheet" href="chat-styleguide.css" />
+    <link rel="stylesheet" href="chat-style.css" />
+    <style>
+      .desktop {
+        background-image: image-set(url("pics/grid.webp") type("image/webp"), url("pics/Group 1-1.png") type("image/png"));
+        background-size: cover;
+        background-position: center center;
+        background-attachment: fixed;
+      }
+      .contacto-main {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 24px;
+      }
+      .contacto-card {
+        max-width: 480px;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 32px;
+      }
+      .contacto-textarea {
+        background: rgba(210,210,205,1);
+        border: none;
+        outline: none;
+        padding: 14px 16px;
+        font-family: var(--button-text-font-family);
+        font-size: var(--button-text-font-size);
+        color: var(--textheadline-2);
+        width: 100%;
+        box-sizing: border-box;
+        resize: vertical;
+        transition: box-shadow 0.15s;
+      }
+      .contacto-textarea:focus {
+        box-shadow: inset 0 0 0 1px var(--dividersdivider-1);
+      }
+      .contacto-textarea::placeholder { color: var(--textheadline-2); opacity: 0.5; }
+    </style>
+  </head>
+  <body>
+    <div class="desktop">
+
+      <!-- Navigation -->
+      <nav class="nav-chat" aria-label="Main navigation">
+        <a href="index.html" class="nav-home" aria-label="Home">Home</a>
+        <div class="find-bar">
+          <input class="find-bar__input" id="find-bar-input" type="search" placeholder="Buscar productos..." autocomplete="off" aria-label="Buscar productos" />
+          <button class="find-bar__btn" id="find-bar-btn" aria-label="Buscar">
+            <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L13.5 13.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="nav-icon-group">
+          <a href="catalog.html" class="nav-icon-btn" aria-label="Catálogo">
+            <img class="catalog-nav-icon" src="pics/Group 29.png" alt="" aria-hidden="true" />
+          </a>
+          <button class="nav-icon-btn" type="button" aria-label="Chat" onclick="location.href='chat.html'">
+            <img class="img" src="https://c.animaapp.com/ZM2jsSkD/img/chat-icon-1@2x.png" alt="" aria-hidden="true" />
+          </button>
+          <button class="nav-cart-btn" id="nav-cart-btn" aria-label="Ver carrito" onclick="location.href='chat.html'">
+            <img class="cart-icon" src="https://c.animaapp.com/ZM2jsSkD/img/cart-icon@2x.png" alt="" aria-hidden="true" />
+            <span class="cart-badge hidden" id="cart-badge">0</span>
+          </button>
+          <a href="contacto.html" class="nav-contact">Contact</a>
+        </div>
+      </nav>
+
+      <!-- Content -->
+      <main class="contacto-main">
+        <div class="contacto-card">
+
+          <h1 class="heading" style="text-align:left;">Hablemos.</h1>
+
+          <form id="contacto-form" novalidate style="display:flex; flex-direction:column; gap:20px;">
+            <label class="sr-only" for="c-msg">Mensaje</label>
+            <textarea id="c-msg" class="contacto-textarea" rows="6" placeholder="¿En qué te podemos ayudar?" required></textarea>
+
+            <p class="hidden" id="c-error" style="font-family:var(--button-text-font-family); font-size:0.85rem; color:var(--textheadline-2); margin:0;" aria-live="polite"></p>
+
+            <button class="button-primary-like" type="submit" id="c-submit" style="align-self:flex-start;">
+              Enviar mensaje
+            </button>
+          </form>
+
+          <div class="hidden" id="contacto-success" aria-live="polite"
+            style="display:flex; flex-direction:column; gap:16px;">
+            <p style="font-family:var(--button-text-font-family); font-size:1rem; color:var(--textheadline-2);">
+              ✓ Mensaje enviado. Te respondemos pronto.
+            </p>
+            <a href="chat.html" class="button-primary-like" style="align-self:flex-start; text-decoration:none;">
+              Probar Clark →
+            </a>
+          </div>
+
+        </div>
+      </main>
+
+    </div>
+    <script>
+      // Find bar → redirect to catalog
+      const findInput = document.getElementById('find-bar-input');
+      const findBtn = document.getElementById('find-bar-btn');
+      function doSearch() {
+        const q = findInput.value.trim();
+        location.href = 'catalog.html' + (q ? '?q=' + encodeURIComponent(q) : '');
+      }
+      findBtn.addEventListener('click', doSearch);
+      findInput.addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+      // Cart badge from localStorage
+      try {
+        const cart = JSON.parse(localStorage.getItem('cart') || '[]');
+        const total = cart.reduce((s, i) => s + (i.qty || 1), 0);
+        const badge = document.getElementById('cart-badge');
+        if (total > 0) { badge.textContent = total; badge.classList.remove('hidden'); }
+      } catch(e) {}
+
+      document.getElementById('contacto-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const msg = document.getElementById('c-msg').value.trim();
+        const errorEl = document.getElementById('c-error');
+        if (!msg) {
+          errorEl.textContent = 'Por favor escribí tu mensaje.';
+          errorEl.classList.remove('hidden');
+          return;
+        }
+        errorEl.classList.add('hidden');
+        const btn = document.getElementById('c-submit');
+        btn.disabled = true;
+        btn.textContent = 'Enviando...';
+        setTimeout(() => {
+          document.getElementById('contacto-form').classList.add('hidden');
+          const success = document.getElementById('contacto-success');
+          success.classList.remove('hidden');
+          success.style.display = 'flex';
+        }, 600);
+      });
+    </script>
+  </body>
+</html>

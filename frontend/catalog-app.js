@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   fetchCatalog();
   bindSearch();
+  bindCategories();
   bindCart();
   renderCart();
 });
@@ -61,14 +62,18 @@ function setCategory(cat) {
     b.classList.toggle('cat-btn--active', b.dataset.cat === cat);
   });
   renderGrid();
+  if (window.innerWidth <= 640) {
+    document.getElementById('catalog-sidebar')?.classList.remove('is-open');
+  }
 }
 
 function renderGrid() {
   const grid = document.getElementById('catalog-grid');
   const countEl = document.getElementById('catalog-count');
-  document.getElementById('catalog-loading').classList.add('hidden');
+  const loadingEl = document.getElementById('catalog-loading');
+  if (loadingEl) loadingEl.classList.add('hidden');
 
-  grid.querySelectorAll('.catalog-card').forEach(el => el.remove());
+  grid.innerHTML = '';
 
   let filtered = state.products;
   if (state.activeCategory) filtered = filtered.filter(p => p.category === state.activeCategory);
@@ -127,6 +132,16 @@ function bindSearch() {
   navInput.addEventListener('input', () => { state.query = navInput.value.trim(); renderGrid(); });
 }
 
+function bindCategories() {
+  const toggleBtn = document.getElementById('nav-categories-btn');
+  const sidebar = document.getElementById('catalog-sidebar');
+  if (!toggleBtn || !sidebar) return;
+
+  toggleBtn.addEventListener('click', () => {
+    sidebar.classList.toggle('is-open');
+  });
+}
+
 // ─── Cart ─────────────────────────────────────────────────────────────────────
 
 function addToCart(p) {
@@ -146,23 +161,38 @@ function addToCart(p) {
   }
   saveCart();
   renderCart();
+  syncCartToServer(state.cart);
+  document.getElementById('cart-panel').classList.remove('hidden');
 }
 
-function removeFromCart(productId) {
+async function removeFromCart(productId) {
   state.cart = state.cart.filter(i => i.product_id !== productId);
   saveCart();
   renderCart();
+  try {
+    await fetch(`${API}/cart/remove`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ product_id: productId, session_id: state.sessionToken }),
+    });
+  } catch (_) { /* best-effort */ }
 }
 
-function updateCartQty(productId, delta) {
+async function updateCartQty(productId, delta) {
   const item = state.cart.find(i => i.product_id === productId);
   if (!item) return;
   item.quantity += delta;
-  if (item.quantity <= 0) removeFromCart(productId);
-  else { saveCart(); renderCart(); }
+  if (item.quantity <= 0) {
+    await removeFromCart(productId);
+  } else {
+    saveCart();
+    renderCart();
+    syncCartToServer(state.cart);
+  }
 }
 
 function renderCart() {
+  const page      = document.querySelector('.catalog-page');
   const panel     = document.getElementById('cart-panel');
   const container = document.getElementById('cart-items');
   const emptyMsg  = document.getElementById('cart-empty-msg');
@@ -175,6 +205,8 @@ function renderCart() {
   const totalCount = state.cart.reduce((s, i) => s + i.quantity, 0);
   badge.textContent = totalCount;
   badge.classList.toggle('hidden', totalCount === 0);
+  panel.classList.toggle('hidden', state.cart.length === 0);
+  page?.classList.toggle('catalog-page--cart-open', state.cart.length > 0 && !panel.classList.contains('hidden'));
   emptyMsg.classList.toggle('hidden', state.cart.length > 0);
   footer.classList.toggle('hidden', state.cart.length === 0);
 
@@ -194,6 +226,7 @@ function renderCart() {
         <button data-action="dec" data-id="${esc(item.product_id)}">−</button>
         <span>${item.quantity}</span>
         <button data-action="inc" data-id="${esc(item.product_id)}">+</button>
+        <button data-action="remove" data-id="${esc(item.product_id)}" class="cart-item__remove" aria-label="Eliminar">✕</button>
       </div>
     `;
     container.insertBefore(el, emptyMsg);
@@ -208,14 +241,19 @@ function bindCart() {
     if (!btn) return;
     if (btn.dataset.action === 'inc') updateCartQty(btn.dataset.id, 1);
     if (btn.dataset.action === 'dec') updateCartQty(btn.dataset.id, -1);
+    if (btn.dataset.action === 'remove') removeFromCart(btn.dataset.id);
   });
 
   document.getElementById('cart-close').addEventListener('click', () => {
     document.getElementById('cart-panel').classList.add('hidden');
+    document.querySelector('.catalog-page')?.classList.remove('catalog-page--cart-open');
   });
 
   document.getElementById('nav-cart-btn').addEventListener('click', () => {
-    document.getElementById('cart-panel').classList.toggle('hidden');
+    if (state.cart.length === 0) return;
+    const panel = document.getElementById('cart-panel');
+    panel.classList.toggle('hidden');
+    document.querySelector('.catalog-page')?.classList.toggle('catalog-page--cart-open', !panel.classList.contains('hidden'));
   });
 
   document.getElementById('btn-checkout').addEventListener('click', checkout);
@@ -236,6 +274,7 @@ async function checkout() {
     state.cart = [];
     saveCart();
     renderCart();
+    document.getElementById('cart-panel').classList.add('hidden');
     alert(`¡Pedido confirmado! #${json.data.order_id} — Total: $${json.data.total.toFixed(2)}`);
   } catch (err) {
     alert(`Error: ${err.message}`);
@@ -260,6 +299,20 @@ function loadSessionToken() {
   const created = window.crypto?.randomUUID?.() || `session-${Date.now()}`;
   localStorage.setItem('chatSessionToken', created);
   return created;
+}
+
+function jsonHeaders() {
+  return { 'Content-Type': 'application/json', 'X-Session-Token': state.sessionToken };
+}
+
+async function syncCartToServer(items) {
+  try {
+    await fetch(`${API}/cart/sync`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ items: items.map(i => ({ product_id: i.product_id, quantity: i.quantity })) }),
+    });
+  } catch (_) { /* best-effort */ }
 }
 
 function esc(str) {

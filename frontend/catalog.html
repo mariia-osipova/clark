@@ -15,6 +15,9 @@
 
       <!-- Navigation -->
       <nav class="nav-chat" aria-label="Main navigation">
+        <button class="nav-icon-btn nav-categories-btn" id="nav-categories-btn" type="button" aria-label="Abrir categorías">
+          <span class="nav-categories-btn__bars" aria-hidden="true"></span>
+        </button>
         <a href="index.html" class="nav-home" aria-label="Home">Home</a>
         <div class="find-bar">
           <input class="find-bar__input" id="find-bar-input" type="search" placeholder="Buscar productos..." autocomplete="off" aria-label="Buscar productos" />
@@ -22,29 +25,26 @@
             <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><circle cx="6.5" cy="6.5" r="5" stroke="currentColor" stroke-width="1.5"/><path d="M10.5 10.5L13.5 13.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
           </button>
         </div>
-        <a href="catalog.html" class="nav-icon-btn nav-icon-btn--active" aria-label="Catálogo">
-          <svg width="19" height="19" viewBox="0 0 19 19" fill="none" aria-hidden="true"><rect x="1" y="1" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="11" y="1" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="1" y="11" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/><rect x="11" y="11" width="7" height="7" rx="1" stroke="currentColor" stroke-width="1.5"/></svg>
-        </a>
-        <button class="nav-icon-btn" type="button" aria-label="Chat" onclick="location.href='chat.html'">
-          <img class="img" src="https://c.animaapp.com/ZM2jsSkD/img/chat-icon-1@2x.png" alt="" aria-hidden="true" />
-        </button>
-        <button class="nav-icon-btn" type="button" aria-label="Perfil">
-          <img class="profile-icon" src="https://c.animaapp.com/ZM2jsSkD/img/profile-icon@2x.png" alt="" aria-hidden="true" />
-        </button>
-        <button class="nav-icon-btn" type="button" aria-label="Favoritos">
-          <img class="img" src="https://c.animaapp.com/ZM2jsSkD/img/icon-of-favorites@2x.png" alt="" aria-hidden="true" />
-        </button>
-        <button class="nav-cart-btn" id="nav-cart-btn" aria-label="Ver carrito">
-          <img class="cart-icon" src="https://c.animaapp.com/ZM2jsSkD/img/cart-icon@2x.png" alt="" aria-hidden="true" />
-          <span class="cart-badge hidden" id="cart-badge">0</span>
-        </button>
+        <div class="nav-icon-group">
+          <a href="catalog.html" class="nav-icon-btn nav-icon-btn--active" aria-label="Catálogo">
+            <img class="catalog-nav-icon" src="pics/Group 29.png" alt="" aria-hidden="true" />
+          </a>
+          <button class="nav-icon-btn" type="button" aria-label="Chat" onclick="location.href='chat.html'">
+            <img class="img" src="https://c.animaapp.com/ZM2jsSkD/img/chat-icon-1@2x.png" alt="" aria-hidden="true" />
+          </button>
+          <button class="nav-cart-btn" id="nav-cart-btn" aria-label="Ver carrito">
+            <img class="cart-icon" src="https://c.animaapp.com/ZM2jsSkD/img/cart-icon@2x.png" alt="" aria-hidden="true" />
+            <span class="cart-badge hidden" id="cart-badge">0</span>
+          </button>
+          <a href="contacto.html" class="nav-contact">Contact</a>
+        </div>
       </nav>
 
       <!-- Page body -->
       <main class="catalog-page">
 
         <!-- Sidebar: categories -->
-        <aside class="catalog-sidebar">
+        <aside class="catalog-sidebar" id="catalog-sidebar">
           <p class="catalog-sidebar__label">Categorías</p>
           <ul class="catalog-categories" id="catalog-categories">
             <li><button class="cat-btn cat-btn--active" data-cat="">Todos</button></li>
@@ -63,7 +63,6 @@
 
       </main>
 
-      <!-- Cart panel -->
       <aside class="cart-panel hidden" id="cart-panel" aria-label="Carrito">
         <div class="cart-panel__header">
           <span class="cart-panel__title">Tu carrito</span>
@@ -74,7 +73,7 @@
         </div>
         <div class="cart-footer hidden" id="cart-footer">
           <div class="cart-total">Total: <span id="cart-total">$0.00</span></div>
-          <button class="cart-checkout" id="btn-checkout">Confirmar pedido</button>
+          <button class="cart-checkout button-primary-like" id="btn-checkout">Confirmar pedido</button>
         </div>
       </aside>
 

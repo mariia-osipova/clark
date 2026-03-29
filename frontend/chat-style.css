@@ -8,15 +8,22 @@
   min-height: 100vh;
   align-items: center;
   background-color: var(--backgroundbackground-1);
-  overflow-x: hidden;
+  overflow-x: clip;
+  padding-top: 57px;
 }
 
 /* ── Nav ── */
 .nav-chat {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
   display: flex;
   height: 57px;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 10px 20px;
   width: 100%;
   box-sizing: border-box;
@@ -44,7 +51,7 @@
 }
 
 .nav-home:hover { opacity: 0.65; }
-.find-bar   { flex: 1; max-width: 603px; height: 33px; }
+.find-bar   { flex: 1 1 clamp(160px, 34vw, 420px); width: clamp(160px, 34vw, 420px); min-width: 0; max-width: 703px; height: 33px; margin: 0 clamp(8px, 1.6vw, 18px); }
 .img        { width: 19px; height: 19px; object-fit: cover; }
 .profile-icon { width: 16px; height: 19px; object-fit: cover; }
 .cart-icon  { width: 22px; height: 19px; object-fit: cover; }
@@ -61,6 +68,13 @@
 }
 
 .nav-contact:hover { opacity: 0.65; }
+
+.nav-icon-group {
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 2vw, 28px);
+  flex-shrink: 0;
+}
 
 /* ── Main ── */
 .main {
@@ -149,6 +163,7 @@
   margin: 0 auto 32px;
   background: rgba(210, 210, 205, 1);
   box-shadow: 0px 4px 4px rgba(0,0,0,0.2);
+  padding-left: 8px;
 }
 
 .chat-input {
@@ -187,7 +202,7 @@
 .chat-submit:hover { opacity: 0.7; }
 .chat-submit:active { opacity: 0.5; }
 
-.chat-submit-icon { width: 17px; height: 17px; object-fit: cover; }
+.chat-submit-icon { width: 17px; height: 17px; object-fit: cover; filter: invert(0); }
 
 /* ── Modal ── */
 .modal {
@@ -245,18 +260,12 @@
 .modal__actions { display: flex; justify-content: flex-end; gap: 12px; }
 
 .modal-btn {
-  padding: 10px 20px;
   border: none;
   cursor: pointer;
-  font-family: var(--button-text-font-family);
-  font-size: 0.875rem;
-  font-weight: 500;
-  transition: opacity 0.15s ease, background 0.15s ease;
+  transition: opacity 0.15s ease, background 0.15s ease, transform 0.2s ease, box-shadow 0.2s ease;
 }
 .modal-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .modal-btn--primary { background: var(--textheadline-1); color: var(--textheadline-2); }
-.modal-btn--primary:not(:disabled):hover { opacity: 0.85; }
-.modal-btn--primary:not(:disabled):active { opacity: 0.7; }
 .modal-btn--secondary { background: transparent; color: var(--textheadline-2); border: 1px solid var(--dividersdivider-1); }
 .modal-btn--secondary:hover { background: rgba(202,30,8,0.06); }
 
@@ -342,6 +351,39 @@
   width: 17px;
   height: 17px;
   object-fit: cover;
+}
+
+.catalog-nav-icon {
+  width: 19px;
+  height: 19px;
+  object-fit: contain;
+}
+
+.button-primary-like {
+  background-color: var(--textheadline-1);
+  color: var(--textheadline-2);
+  border: none;
+  cursor: pointer;
+  padding: 16px;
+  font-family: var(--button-text-font-family);
+  font-size: var(--button-text-font-size);
+  font-weight: var(--button-text-font-weight);
+  letter-spacing: var(--button-text-letter-spacing);
+  line-height: var(--button-text-line-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.button-primary-like:hover:not(:disabled) {
+  transform: scale(1.07);
+  box-shadow: 0px 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+.button-primary-like:active:not(:disabled) {
+  transform: scale(1.03);
 }
 
 /* ── Nav icon buttons ── */
@@ -555,27 +597,14 @@
 }
 
 .cart-checkout {
-  background: var(--textheadline-1);
-  color: var(--textheadline-2);
-  border: none;
-  cursor: pointer;
-  padding: 12px;
-  font-family: var(--button-text-font-family);
-  font-size: 0.875rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  transition: opacity 0.15s;
+  width: 100%;
 }
-
-.cart-checkout:hover { opacity: 0.85; }
-.cart-checkout:active { opacity: 0.7; }
 
 /* ── Find bar ── */
 .find-bar {
   flex: 1;
-  max-width: 480px;
-  height: 33px;
+  max-width: 640px;
+  height: 40px;
   display: flex;
   align-items: center;
   background: rgba(0,0,0,0.06);
@@ -626,6 +655,14 @@
   gap: 32px;
 }
 
+.button-row {
+  gap: 16px;
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  flex: 0 0 auto;
+}
+
 .demo-chips {
   display: flex;
   flex-wrap: wrap;
@@ -650,7 +687,6 @@
 
 .demo-chip:hover { opacity: 0.82; box-shadow: 0 3px 10px rgba(0,0,0,0.18); }
 .demo-chip:active { opacity: 0.65; }
-
 
 /* ── Product card (chat inline catalog) ── */
 .product-card {
@@ -709,8 +745,6 @@
   padding: 1px 6px;
   margin-left: 4px;
 }
-
-
 /* ── Utilities ── */
 .hidden { display: none !important; }
 
@@ -730,19 +764,35 @@
   /* Nav */
   .nav-chat {
     height: 52px;
-    padding: 0 14px;
-    gap: 12px;
+    padding: 0 10px;
+    gap: 6px;
   }
 
-  .find-bar    { max-width: 100%; flex: 1; }
+  .find-bar    { width: clamp(96px, 32vw, 140px); max-width: clamp(96px, 32vw, 140px); flex: 0 1 clamp(96px, 32vw, 140px); height: 34px; margin: 0 6px; }
   .nav-home    { display: none; }
   .nav-contact { display: none; }
 
+  .nav-icon-group {
+    gap: clamp(8px, 3vw, 14px);
+    flex-shrink: 0;
+  }
+
+  .find-bar__input {
+    padding: 0 8px;
+    font-size: 0.75rem;
+  }
+
+  .find-bar__btn {
+    width: 30px;
+    height: 30px;
+  }
   /* Chat layout fills exactly the remaining viewport height */
   .chat-layout {
     flex-direction: column;
     height: calc(100dvh - 52px);
     height: calc(100vh - 52px);
+    min-height: calc(100dvh - 52px);
+    min-height: calc(100vh - 52px);
   }
 
   .chat-column {
@@ -751,39 +801,77 @@
     flex-direction: column;
     min-height: 0;
     height: 100%;
+    order: 2;
   }
 
   .chat-thread-wrapper {
-    padding: 20px 14px 12px;
+    flex: 1;
+    min-height: 0;
+    padding: 16px 14px 12px;
+  }
+
+  .chat-empty-state {
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 18px;
+  }
+
+  .button-row {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+    gap: 10px;
+  }
+
+  .button-primary-like {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
+    white-space: normal;
+    text-align: center;
+    padding: 12px 10px;
+    line-height: 1.25;
   }
 
   /* Input bar pinned at bottom, full width */
   .chat-input-bar {
-    max-width: 100%;
-    margin: 0 0 env(safe-area-inset-bottom, 0px);
+    width: calc(100% - 24px);
+    max-width: calc(100% - 24px);
+    margin: auto 12px calc(env(safe-area-inset-bottom, 0px) + 24px);
     border-radius: 0;
     flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
   }
 
   /* Message bubbles wider on mobile */
   .chat-msg {
     max-width: 85%;
     font-size: 0.9rem;
+    margin: 0 8px;
   }
 
-  /* Cart panel: fixed overlay sliding up from bottom */
+  /* Cart panel: top section under nav */
   .cart-panel {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    order: 1;
+    position: relative;
     width: 100%;
-    height: 65vh;
-    max-height: 65vh;
+    height: 310px;
+    max-height: 310px;
     border-left: none;
-    border-top: 1px solid var(--dividersdivider-1);
-    z-index: 100;
-    box-shadow: 0 -4px 24px rgba(0,0,0,0.12);
+    border-top: none;
+    border-bottom: 1px solid var(--dividersdivider-1);
+    z-index: auto;
+    box-shadow: none;
+    flex-shrink: 0;
+  }
+
+  .cart-panel__close {
+    display: none;
+  }
+
+  .cart-items {
+    padding: 10px 14px;
   }
 
   /* Modal full-width on mobile */
@@ -808,28 +896,32 @@
 
 .chat-input-icon-btn {
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 50px;
   padding: 0;
-  font-size: 1.1rem;
-  border-radius: 50%;
   background: transparent;
-  border: 1px solid rgba(202, 30, 8, 0.25);
+  border: none;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, border-color 0.15s;
+  transition: opacity 0.15s ease;
 }
 
 .chat-input-icon-btn:hover:not(:disabled) {
-  background: rgba(234, 255, 116, 0.2);
-  border-color: var(--dividersdivider-1);
+  opacity: 0.7;
 }
 
 .chat-input-icon-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.chat-icon-img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  pointer-events: none;
 }
 
 @keyframes pulse-record {
