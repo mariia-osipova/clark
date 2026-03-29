@@ -137,9 +137,28 @@ function bindCategories() {
   const sidebar = document.getElementById('catalog-sidebar');
   if (!toggleBtn || !sidebar) return;
 
+  syncCategoriesButtonState();
+
   toggleBtn.addEventListener('click', () => {
-    sidebar.classList.toggle('is-open');
+    if (window.innerWidth <= 640) {
+      sidebar.classList.toggle('is-open');
+    } else {
+      sidebar.classList.toggle('is-collapsed');
+    }
+    syncCategoriesButtonState();
   });
+}
+
+function syncCategoriesButtonState() {
+  const toggleBtn = document.getElementById('nav-categories-btn');
+  const sidebar = document.getElementById('catalog-sidebar');
+  if (!toggleBtn || !sidebar) return;
+
+  const isExpanded = window.innerWidth <= 640
+    ? sidebar.classList.contains('is-open')
+    : !sidebar.classList.contains('is-collapsed');
+
+  toggleBtn.setAttribute('aria-expanded', String(isExpanded));
 }
 
 // ─── Cart ─────────────────────────────────────────────────────────────────────
