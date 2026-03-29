@@ -1,36 +1,55 @@
 {
   "_schema_version": 1,
-  "_doc": "Single hardcoded demo user profile. Consumed by graph nodes and tools.",
+  "_doc": "Demo user — Martín García. Hardcoded for hackathon demo. Product IDs reference data/catalog_snapshot.json.",
 
   "identity": {
-    "name": "",
+    "name": "Martín",
     "locale": "es-AR"
   },
 
   "household": {
-    "size": 1,
-    "has_children": false,
+    "size": 4,
+    "has_children": true,
     "has_pets": false,
     "dietary_restrictions": []
   },
 
   "preferences": {
-    "preferred_brands": {},
+    "preferred_brands": {
+      "lácteos": "La Serenísima",
+      "yerba": "Playadito"
+    },
     "excluded_brands": [],
     "excluded_categories": [],
-    "budget_monthly": null,
+    "budget_monthly": 50000,
     "strict_brand": false
   },
 
   "purchase_history": {
-    "frequent_items": [],
+    "frequent_items": ["720719", "380313", "758014", "669429"],
     "last_order_date": null,
-    "avg_cart_size": null,
-    "shopping_frequency_days": null
+    "avg_cart_size": 8,
+    "shopping_frequency_days": 7
   },
 
   "interaction": {
     "auto_pick_suggestions": false,
     "verbosity": "normal"
+  },
+
+  "cart_profiles": {
+    "desayuno": [
+      {"product_id": "720719", "quantity": 2},
+      {"product_id": "765132", "quantity": 4},
+      {"product_id": "758014", "quantity": 1},
+      {"product_id": "495133", "quantity": 1}
+    ],
+    "despensa": [
+      {"product_id": "718787", "quantity": 2},
+      {"product_id": "726311", "quantity": 3},
+      {"product_id": "699030", "quantity": 1},
+      {"product_id": "380313", "quantity": 2},
+      {"product_id": "669429", "quantity": 1}
+    ]
   }
 }

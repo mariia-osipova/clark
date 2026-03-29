@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindAudio();
   bindImageUpload();
   bindCatalog();
+  bindDemoChips();
   renderCart();
 });
 
@@ -371,6 +372,21 @@ function jsonHeaders() {
 
 function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Demo chips ───────────────────────────────────────────────────────────────
+
+function bindDemoChips() {
+  const chips = document.getElementById('demo-chips');
+  if (!chips) return;
+  chips.addEventListener('click', e => {
+    const chip = e.target.closest('.demo-chip');
+    if (!chip) return;
+    const msg = chip.dataset.msg;
+    if (!msg) return;
+    document.getElementById('chat-input').value = msg;
+    sendChat();
+  });
 }
 
 // ─── Catalog ──────────────────────────────────────────────────────────────────

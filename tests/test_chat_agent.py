@@ -557,8 +557,9 @@ class TestHandleChat:
     def test_generate_monthly_basket_no_plan_returns_empty(
         self, mock_build_graph, mock_load_catalog, sample_catalog
     ):
-        """With no recurring plan in DB, proposed_cart should be empty."""
+        """With no recurring plan in DB and no useful profile, proposed_cart should be empty."""
         import tempfile
+        from unittest.mock import patch
 
         from backend import db as _db
         from backend.chat_agent_agentic import _reset_app_cache
@@ -569,17 +570,23 @@ class TestHandleChat:
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             tmp_path = f.name
 
+        blank_profile = {
+            "preferences": {"budget_monthly": None, "preferred_brands": {}, "strict_brand": False, "excluded_categories": []},
+            "household": {"size": 1},
+        }
+
         orig = os.environ.get("DB_PATH")
         try:
             os.environ["DB_PATH"] = tmp_path
             _db.init_db()
 
-            result = handle_chat(
-                message="",
-                history=[],
-                cart=[],
-                action="generate_monthly_basket",
-            )
+            with patch("backend.user_profile.get_user_profile", return_value=blank_profile):
+                result = handle_chat(
+                    message="",
+                    history=[],
+                    cart=[],
+                    action="generate_monthly_basket",
+                )
 
             assert "proposed_cart" in result
             assert result["proposed_cart"] == []
