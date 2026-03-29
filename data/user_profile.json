@@ -1,36 +1,53 @@
 {
   "_schema_version": 1,
-  "_doc": "Single hardcoded demo user profile. Consumed by graph nodes and tools.",
+  "_doc": "Playground demo user — Martín García",
 
   "identity": {
-    "name": "",
+    "name": "Martín",
     "locale": "es-AR"
   },
 
   "household": {
-    "size": 1,
-    "has_children": false,
+    "size": 4,
+    "has_children": true,
     "has_pets": false,
     "dietary_restrictions": []
   },
 
   "preferences": {
-    "preferred_brands": {},
+    "preferred_brands": {"lácteos": "La Serenísima"},
     "excluded_brands": [],
     "excluded_categories": [],
-    "budget_monthly": null,
+    "budget_monthly": 20000,
     "strict_brand": false
   },
 
   "purchase_history": {
-    "frequent_items": [],
+    "frequent_items": ["demo_leche_serenisima", "demo_huevos_lapalma", "demo_pan_fargo"],
     "last_order_date": null,
-    "avg_cart_size": null,
-    "shopping_frequency_days": null
+    "avg_cart_size": 8,
+    "shopping_frequency_days": 7
   },
 
   "interaction": {
     "auto_pick_suggestions": false,
     "verbosity": "normal"
+  },
+
+  "cart_profiles": {
+    "desayuno": [
+      {"product_id": "demo_leche_serenisima", "quantity": 2},
+      {"product_id": "demo_yogur_danone",     "quantity": 4},
+      {"product_id": "demo_pan_fargo",        "quantity": 1},
+      {"product_id": "demo_manteca_pampena",  "quantity": 1}
+    ],
+    "despensa": [
+      {"product_id": "demo_arroz_gallo",      "quantity": 2},
+      {"product_id": "demo_fideos_matarazzo", "quantity": 3},
+      {"product_id": "demo_aceite_natura",    "quantity": 1},
+      {"product_id": "demo_purete_arcor",     "quantity": 4},
+      {"product_id": "demo_harina_morixe",    "quantity": 1},
+      {"product_id": "demo_azucar_ledesma",   "quantity": 1}
+    ]
   }
 }

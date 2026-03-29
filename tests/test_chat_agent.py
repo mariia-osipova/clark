@@ -274,12 +274,12 @@ class TestHandleChat:
         assert len(result["clarification"]["options"]) == 2
         assert "pending_request_id" in result["clarification"]
 
-    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._get_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
-    def test_clarification_resolution_bypasses_llm_and_adds_to_cart(self, mock_build_graph, mock_load_catalog, sample_catalog):
+    def test_clarification_resolution_bypasses_llm_and_adds_to_cart(self, mock_build_graph, mock_get_catalog, sample_catalog):
         """When clarification_response resolves to a known product_id with no
         pending_message, the cart is updated directly without invoking the graph."""
-        mock_load_catalog.return_value = sample_catalog
+        mock_get_catalog.return_value = sample_catalog
         mock_app = MagicMock()
         mock_build_graph.return_value = mock_app
 
@@ -294,13 +294,13 @@ class TestHandleChat:
         assert result["clarification"] is None
         assert any(item["product_id"] == "p1" for item in (result["cart"] or []))
 
-    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._get_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
-    def test_clarification_resolution_continues_with_pending_message(self, mock_build_graph, mock_load_catalog, sample_catalog):
+    def test_clarification_resolution_continues_with_pending_message(self, mock_build_graph, mock_get_catalog, sample_catalog):
         """Clarification resolution adds the chosen item and returns immediately.
         The graph is NOT re-invoked even when pending_message is present, to avoid
         re-running resolve_product on the same query and entering a clarification loop."""
-        mock_load_catalog.return_value = sample_catalog
+        mock_get_catalog.return_value = sample_catalog
         mock_app = MagicMock()
         mock_build_graph.return_value = mock_app
 
@@ -487,10 +487,10 @@ class TestHandleChat:
         result = handle_chat(message="hola", history=[], cart=[], session_id="sess-abc")
         assert result["reply"] == "Hola"
 
-    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._get_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
     def test_generate_monthly_basket_action_returns_proposed_cart(
-        self, mock_build_graph, mock_load_catalog, sample_catalog
+        self, mock_build_graph, mock_get_catalog, sample_catalog
     ):
         """action='generate_monthly_basket' bypasses the graph and returns a proposed_cart."""
         import tempfile
@@ -499,7 +499,7 @@ class TestHandleChat:
         from backend.chat_agent_agentic import _reset_app_cache
 
         _reset_app_cache()
-        mock_load_catalog.return_value = sample_catalog
+        mock_get_catalog.return_value = sample_catalog
 
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             tmp_path = f.name
@@ -554,10 +554,11 @@ class TestHandleChat:
 
     @patch("backend.chat_agent_agentic._load_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
+    @patch("backend.user_profile.get_user_profile", return_value={"preferences": {}, "household": {}})
     def test_generate_monthly_basket_no_plan_returns_empty(
-        self, mock_build_graph, mock_load_catalog, sample_catalog
+        self, mock_get_profile, mock_build_graph, mock_load_catalog, sample_catalog
     ):
-        """With no recurring plan in DB, proposed_cart should be empty."""
+        """With no recurring plan in DB and no profile config, proposed_cart should be empty."""
         import tempfile
 
         from backend import db as _db
@@ -634,8 +635,12 @@ class TestSingletonCache:
         llm.invoke.return_value = MagicMock(content='{"turn_kind": "smalltalk", "planned_items": []}')
         mock_llm_cls.return_value = llm
 
-        handle_chat("hola", [], [])
-        handle_chat("adiós", [], [])
+        mock_stat = MagicMock()
+        mock_stat.st_mtime = 12345.0
+        with patch("backend.chat_agent_agentic.CATALOG_PATH") as mock_catalog_path:
+            mock_catalog_path.stat.return_value = mock_stat
+            handle_chat("hola", [], [])
+            handle_chat("adiós", [], [])
 
         assert mock_load_catalog.call_count == 1
 
@@ -904,10 +909,10 @@ class TestBugFixes:
 
     @patch("backend.chat_agent_agentic._read_session_cart")
     @patch("backend.chat_agent_agentic._write_session_cart_item")
-    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._get_catalog")
     @patch("backend.chat_agent_agentic._build_graph")
     def test_clarification_resume_rehydrates_resolved_so_far_into_resolved_cart(
-        self, mock_build_graph, mock_load_catalog, mock_write_cart, mock_read_cart, sample_catalog
+        self, mock_build_graph, mock_get_catalog, mock_write_cart, mock_read_cart, sample_catalog
     ):
         """Resume input must carry forward already-resolved items into resolved_cart.
 
@@ -916,7 +921,7 @@ class TestBugFixes:
         """
         from backend.chat_agent_agentic import _reset_app_cache
         _reset_app_cache()
-        mock_load_catalog.return_value = sample_catalog
+        mock_get_catalog.return_value = sample_catalog
         mock_read_cart.return_value = []
 
         prior_resolved = {
@@ -962,9 +967,9 @@ class TestBugFixes:
 
     @patch("backend.product_semantic_index.resolve_product")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
-    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._get_catalog")
     def test_single_item_chat_normalizes_quantity_with_parse_quantity(
-        self, mock_load_catalog, mock_llm_cls, mock_resolve, sample_catalog
+        self, mock_get_catalog, mock_llm_cls, mock_resolve, sample_catalog
     ):
         """Single-item turns must normalize quantity from the raw message.
 
@@ -973,7 +978,7 @@ class TestBugFixes:
         """
         from backend.chat_agent_agentic import _reset_app_cache
         _reset_app_cache()
-        mock_load_catalog.return_value = sample_catalog
+        mock_get_catalog.return_value = sample_catalog
         mock_resolve.return_value = {
             "status": "resolved", "product": sample_catalog[1], "quantity": 2,
         }
@@ -1020,12 +1025,12 @@ class TestPhaseGraph:
 
     @patch("backend.product_semantic_index.resolve_product")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
-    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._get_catalog")
     def test_shopping_turn_calls_resolve_and_returns_reply(
-        self, mock_load_catalog, mock_llm_cls, mock_resolve, sample_catalog
+        self, mock_get_catalog, mock_llm_cls, mock_resolve, sample_catalog
     ):
         """Happy path: classify → resolve → apply → summarize."""
-        mock_load_catalog.return_value = sample_catalog
+        mock_get_catalog.return_value = sample_catalog
         mock_resolve.return_value = {
             "status": "resolved", "product": sample_catalog[0], "quantity": 1,
         }
@@ -1145,14 +1150,14 @@ class TestPhaseGraph:
 
     @patch("backend.product_semantic_index.resolve_product")
     @patch("backend.chat_agent_agentic.ChatOpenAI")
-    @patch("backend.chat_agent_agentic._load_catalog")
+    @patch("backend.chat_agent_agentic._get_catalog")
     def test_resolve_items_skips_already_resolved(
-        self, mock_load_catalog, mock_llm_cls, mock_resolve, sample_catalog
+        self, mock_get_catalog, mock_llm_cls, mock_resolve, sample_catalog
     ):
         """Items pre-populated in resolutions are not re-resolved by resolve_items."""
         from backend.chat_agent_agentic import _get_or_build_app, _reset_app_cache
         _reset_app_cache()
-        mock_load_catalog.return_value = sample_catalog
+        mock_get_catalog.return_value = sample_catalog
         mock_resolve.return_value = {
             "status": "resolved", "product": sample_catalog[1], "quantity": 1,
         }

@@ -400,7 +400,7 @@ class TestChatEndpoint:
             ),
         ]
 
-        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), patch(
+        with patch("backend.chat_agent_agentic._get_catalog", return_value=sample_catalog), patch(
             "backend.chat_agent_agentic._build_graph", return_value=mock_app
         ):
             first, status1 = _post(
@@ -449,7 +449,7 @@ class TestChatEndpoint:
         ]
 
         import backend.app as app_module
-        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), \
+        with patch("backend.chat_agent_agentic._get_catalog", return_value=sample_catalog), \
              patch("backend.chat_agent_agentic._build_graph", return_value=mock_app), \
              patch.object(app_module, "_load_catalog", return_value=sample_catalog):
             first, status1 = _post(
@@ -498,7 +498,7 @@ class TestChatEndpoint:
         mock_app.invoke.return_value = _graph_state(reply="¿Cuál leche querés?", clarification=clarification)
 
         import backend.app as app_module
-        with patch("backend.chat_agent_agentic._load_catalog", return_value=sample_catalog), \
+        with patch("backend.chat_agent_agentic._get_catalog", return_value=sample_catalog), \
              patch("backend.chat_agent_agentic._build_graph", return_value=mock_app), \
              patch.object(app_module, "_load_catalog", return_value=sample_catalog):
             first, status1 = _post(
