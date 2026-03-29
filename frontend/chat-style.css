@@ -571,6 +571,55 @@
 .cart-checkout:hover { opacity: 0.85; }
 .cart-checkout:active { opacity: 0.7; }
 
+/* ── Find bar ── */
+.find-bar {
+  flex: 1;
+  max-width: 480px;
+  height: 33px;
+  display: flex;
+  align-items: center;
+  background: rgba(0,0,0,0.06);
+  border: 1px solid transparent;
+  transition: border-color 0.15s;
+}
+
+.find-bar:focus-within {
+  border-color: var(--dividersdivider-1);
+  background: rgba(255,255,241,0.8);
+}
+
+.find-bar__input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 0 10px;
+  font-family: var(--button-text-font-family);
+  font-size: 0.82rem;
+  color: var(--textbody-1);
+  min-width: 0;
+}
+
+.find-bar__input::placeholder { color: rgba(0,0,0,0.35); }
+.find-bar__input::-webkit-search-cancel-button { display: none; }
+
+.find-bar__btn {
+  width: 33px;
+  height: 33px;
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--textbody-1);
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+
+.find-bar__btn:hover { opacity: 1; }
+
 /* ── Demo chips ── */
 .chat-empty-state {
   flex-direction: column;
@@ -621,11 +670,16 @@
 /* ── Catalog panel ── */
 .catalog-panel {
   position: fixed;
-  inset: 57px 0 0 0;
+  top: 52px;
+  right: 0;
+  width: 380px;
+  height: calc(100vh - 52px);
   background: var(--backgroundbackground-1);
+  border-left: 1px solid var(--dividersdivider-1);
   display: flex;
   flex-direction: column;
-  z-index: 50;
+  z-index: 90;
+  box-shadow: -4px 0 24px rgba(0,0,0,0.08);
   overflow: hidden;
 }
 
@@ -640,7 +694,6 @@
 
 .catalog-search {
   flex: 1;
-  max-width: 480px;
   height: 40px;
   padding: 0 14px;
   border: 1px solid var(--dividersdivider-1);
@@ -671,7 +724,7 @@
   overflow-y: auto;
   padding: 20px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 16px;
   align-content: start;
 }
@@ -685,7 +738,7 @@
   margin-top: 40px;
 }
 
-/* ── Product card ── */
+/* ── Product card (chat inline catalog) ── */
 .product-card {
   display: flex;
   flex-direction: column;
@@ -713,7 +766,6 @@
   font-weight: 600;
   color: var(--textbody-1);
   line-height: 1.3;
-  /* max 2 lines */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -738,12 +790,12 @@
   display: inline-block;
   font-size: 0.7rem;
   font-weight: 700;
-  background: #dcfce7;
-  color: #16a34a;
+  background: var(--textheadline-1);
+  color: var(--textheadline-2);
   padding: 1px 6px;
-  border-radius: 2px;
   margin-left: 4px;
 }
+
 
 /* ── Utilities ── */
 .hidden { display: none !important; }
@@ -768,9 +820,14 @@
     gap: 12px;
   }
 
-  .find-bar    { display: none; }
+  .find-bar    { max-width: 100%; flex: 1; }
   .nav-home    { display: none; }
   .nav-contact { display: none; }
+
+  .catalog-panel {
+    width: 100%;
+    top: 52px;
+  }
 
   /* Chat layout fills exactly the remaining viewport height */
   .chat-layout {
@@ -848,7 +905,7 @@
   font-size: 1.1rem;
   border-radius: 50%;
   background: transparent;
-  border: 1px solid #e2e8f0;
+  border: 1px solid rgba(202, 30, 8, 0.25);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -857,8 +914,8 @@
 }
 
 .chat-input-icon-btn:hover:not(:disabled) {
-  background: #eef2ff;
-  border-color: #6366f1;
+  background: rgba(234, 255, 116, 0.2);
+  border-color: var(--dividersdivider-1);
 }
 
 .chat-input-icon-btn:disabled {
@@ -867,12 +924,12 @@
 }
 
 @keyframes pulse-record {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4); }
-  50%       { box-shadow: 0 0 0 6px rgba(220, 38, 38, 0); }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(202, 30, 8, 0.4); }
+  50%       { box-shadow: 0 0 0 6px rgba(202, 30, 8, 0); }
 }
 
 .btn--recording {
-  background: #fee2e2 !important;
-  border-color: #dc2626 !important;
+  background: rgba(202, 30, 8, 0.1) !important;
+  border-color: var(--dividersdivider-1) !important;
   animation: pulse-record 1.2s ease infinite;
 }

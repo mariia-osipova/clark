@@ -10,13 +10,17 @@ const state = {
   clarification: null,
 };
 
+
 const audioState = {
   mediaRecorder: null,
   chunks: [],
   recording: false,
 };
 
+
 document.addEventListener('DOMContentLoaded', () => {
+
+  bindFindBar();
   bindChat();
   bindClarificationForm();
   bindModalCancel();
@@ -29,6 +33,18 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ─── Chat ─────────────────────────────────────────────────────────────────────
+
+function bindFindBar() {
+  const input = document.getElementById('find-bar-input');
+  const btn   = document.getElementById('find-bar-btn');
+  if (!input) return;
+  const go = () => {
+    const q = input.value.trim();
+    location.href = `catalog.html${q ? '?q=' + encodeURIComponent(q) : ''}`;
+  };
+  btn.addEventListener('click', go);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+}
 
 function bindChat() {
   const input = document.getElementById('chat-input');
