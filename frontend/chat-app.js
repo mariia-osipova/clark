@@ -334,7 +334,7 @@ async function checkout() {
   try {
     const res = await fetch(`${API}/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ cart: state.cart }),
     });
     const json = await res.json();
