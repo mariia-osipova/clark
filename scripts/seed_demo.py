@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 """
-Seed the demo database for hackathon demo (Martín García persona).
+Seed the demo database for the Jaime demo persona.
 
-Idempotent — safe to re-run. Clears demo-seeded rows before inserting.
+Idempotent — safe to re-run. Clears demo-seeded rows before inserting
+and rewrites the demo profile to a known-good minimal shape.
 
 Usage:
     python3 scripts/seed_demo.py
 """
 
 import json
+import os
 import sqlite3
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent.parent / "data" / "proxy_store.db"
+ROOT = Path(__file__).parent.parent
+DB_PATH = Path(os.environ.get("DB_PATH", ROOT / "data" / "proxy_store.db"))
+PROFILE_PATH = Path(os.environ.get("USER_PROFILE_PATH", ROOT / "data" / "user_profile.json"))
 
 # ── Product catalog snapshots for order cart_json ──────────────────────────────
 # Pulled from data/catalog_snapshot.json on 2026-03-28.
@@ -83,6 +87,7 @@ OIL = {
     "price": 2998.6,
     "image_url": "https://carrefourar.vteximg.com.br/arquivos/ids/603859/7791720025291_01.jpg?v=638700617422870000",
 }
+TOILET_PAPER_PRODUCT_ID = "736162"
 
 
 def _cart_item(product: dict, quantity: int) -> dict:
@@ -93,6 +98,67 @@ def _total(items: list[dict]) -> float:
     return sum(i["price"] * i["quantity"] for i in items)
 
 
+def _build_profile(last_order_date: str) -> dict:
+    return {
+        "_schema_version": 1,
+        "_doc": "Demo user — Jaime. Hardcoded for hackathon demo. Product IDs reference data/catalog_snapshot.json.",
+        "identity": {
+            "name": "Jaime",
+            "locale": "es-AR",
+        },
+        "household": {
+            "size": 1,
+            "has_children": False,
+            "has_pets": False,
+            "dietary_restrictions": [],
+        },
+        "preferences": {
+            "preferred_brands": {
+                "lácteos": "La Serenísima",
+            },
+            "excluded_brands": [],
+            "excluded_categories": [],
+            "budget_monthly": 15000,
+            "strict_brand": False,
+        },
+        "purchase_history": {
+            "frequent_items": [
+                MILK["product_id"],
+                BREAD["product_id"],
+                BUTTER["product_id"],
+                TOILET_PAPER_PRODUCT_ID,
+            ],
+            "last_order_date": last_order_date,
+            "avg_cart_size": 3,
+            "shopping_frequency_days": 14,
+        },
+        "interaction": {
+            "auto_pick_suggestions": False,
+            "verbosity": "normal",
+        },
+        "cart_profiles": {
+            "desayuno": [
+                {"product_id": MILK["product_id"], "quantity": 1},
+                {"product_id": BREAD["product_id"], "quantity": 1},
+                {"product_id": BUTTER["product_id"], "quantity": 1},
+            ],
+            "despensa": [
+                {"product_id": RICE["product_id"], "quantity": 1},
+                {"product_id": PASTA["product_id"], "quantity": 1},
+                {"product_id": OIL["product_id"], "quantity": 1},
+                {"product_id": YERBA["product_id"], "quantity": 1},
+            ],
+        },
+    }
+
+
+def _write_profile(last_order_date: str) -> None:
+    PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(PROFILE_PATH, "w", encoding="utf-8") as f:
+        json.dump(_build_profile(last_order_date), f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
 def seed(db: sqlite3.Connection) -> None:
     now = datetime.utcnow()
 
@@ -100,49 +166,29 @@ def seed(db: sqlite3.Connection) -> None:
     # Delete any previously seeded demo orders so this is idempotent.
     db.execute("DELETE FROM orders WHERE id LIKE 'demo-%'")
 
-    # Order A — 7 days ago: milk×2, eggs×2, bread×1, butter×1
-    # This is the "recent" order the forgotten-item nudge references.
-    order_a_items = [
-        _cart_item(MILK, 2),
-        _cart_item(EGGS, 2),
+    # One prior order from two weeks ago is enough for the forgotten-item
+    # nudge and keeps the demo predictable.
+    order_items = [
+        _cart_item(MILK, 1),
+        _cart_item(EGGS, 1),
         _cart_item(BREAD, 1),
-        _cart_item(BUTTER, 1),
     ]
-    order_a_date = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+    order_date = (now - timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
     db.execute(
         "INSERT INTO orders (id, cart_json, total, created_at) VALUES (?, ?, ?, ?)",
         (
             f"demo-{uuid.uuid4().hex[:8]}",
-            json.dumps(order_a_items, ensure_ascii=False),
-            _total(order_a_items),
-            order_a_date,
-        ),
-    )
-
-    # Order B — 30 days ago: milk×2, yerba×1, rice×2, pasta×2, oil×1
-    order_b_items = [
-        _cart_item(MILK, 2),
-        _cart_item(YERBA, 1),
-        _cart_item(RICE, 2),
-        _cart_item(PASTA, 2),
-        _cart_item(OIL, 1),
-    ]
-    order_b_date = (now - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-    db.execute(
-        "INSERT INTO orders (id, cart_json, total, created_at) VALUES (?, ?, ?, ?)",
-        (
-            f"demo-{uuid.uuid4().hex[:8]}",
-            json.dumps(order_b_items, ensure_ascii=False),
-            _total(order_b_items),
-            order_b_date,
+            json.dumps(order_items, ensure_ascii=False),
+            _total(order_items),
+            order_date,
         ),
     )
 
     # ── Preferences ───────────────────────────────────────────────────────────
     prefs = {
-        "notes": "Prefiero La Serenísima para lácteos y Playadito para yerba.",
-        "preferred_brands": {"lácteos": "La Serenísima", "yerba": "Playadito"},
-        "household_size": 4,
+        "notes": "Compras simples para Jaime. Si hay lácteos, priorizá La Serenísima.",
+        "preferred_brands": {"lácteos": "La Serenísima"},
+        "household_size": 1,
         "excluded_categories": [],
     }
     db.execute(
@@ -162,28 +208,25 @@ def seed(db: sqlite3.Connection) -> None:
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             plan_id,
-            4,
-            50000.0,
-            json.dumps(["leche La Serenísima", "huevos", "pan Fargo", "yerba mate", "arroz", "fideos", "aceite"]),
-            json.dumps({"lácteos": "La Serenísima", "yerba": "Playadito"}),
+            1,
+            15000.0,
+            json.dumps(["leche La Serenísima", "huevos", "pan Fargo", "yerba mate"]),
+            json.dumps({"lácteos": "La Serenísima"}),
             0,
             json.dumps([]),
-            "Canasta mensual familia García — 4 personas",
+            "Canasta mensual simple de Jaime",
             now.strftime("%Y-%m-%d %H:%M:%S"),
             now.strftime("%Y-%m-%d %H:%M:%S"),
         ),
     )
 
     must_have = [
-        (MILK["product_id"], 4),
-        (EGGS["product_id"], 2),
-        (BREAD["product_id"], 2),
+        (MILK["product_id"], 1),
+        (EGGS["product_id"], 1),
     ]
     recurring = [
         (YERBA["product_id"], 1),
-        (RICE["product_id"], 2),
-        (PASTA["product_id"], 3),
-        (OIL["product_id"], 1),
+        (BREAD["product_id"], 1),
     ]
     for pid, qty in must_have:
         db.execute(
@@ -197,6 +240,7 @@ def seed(db: sqlite3.Connection) -> None:
         )
 
     db.commit()
+    _write_profile(order_date)
 
 
 def main() -> None:
@@ -204,9 +248,10 @@ def main() -> None:
     with sqlite3.connect(DB_PATH) as db:
         seed(db)
     print("Done.")
-    print("  ✓ 2 demo orders (7 days ago + 30 days ago)")
+    print(f"  ✓ demo profile written to {PROFILE_PATH}")
+    print("  ✓ 1 demo order from two weeks ago")
     print("  ✓ preferences row (key='default')")
-    print("  ✓ recurring plan 'default' (7 must_have items as name queries)")
+    print("  ✓ recurring plan 'default' (4 simple recurring items)")
 
 
 if __name__ == "__main__":
