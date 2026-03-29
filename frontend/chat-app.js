@@ -23,6 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
   bindCartEvents();
   bindAudio();
   bindImageUpload();
+  bindCatalog();
+  bindDemoChips();
   renderCart();
 });
 
@@ -64,7 +66,7 @@ async function sendChat() {
 
     if (!json.ok) throw new Error(json.error);
 
-    const { reply, cart, clarification } = json.data;
+    const { reply, cart, clarification, proposed_cart } = json.data;
     state.chatHistory.push({ role: 'assistant', content: reply });
     appendChatMsg('assistant', reply);
 
@@ -72,6 +74,9 @@ async function sendChat() {
       showClarificationModal(clarification);
     } else if (cart) {
       setCart(cart);
+    } else if (proposed_cart && proposed_cart.length > 0) {
+      setCart(proposed_cart);
+      syncCartToServer(proposed_cart);
     }
   } catch (err) {
     loadingEl.remove();
@@ -330,7 +335,7 @@ async function checkout() {
   try {
     const res = await fetch(`${API}/orders`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: jsonHeaders(),
       body: JSON.stringify({ cart: state.cart }),
     });
     const json = await res.json();
@@ -344,6 +349,16 @@ async function checkout() {
   } finally {
     btn.disabled = false;
   }
+}
+
+async function syncCartToServer(items) {
+  try {
+    await fetch(`${API}/cart/sync`, {
+      method: 'POST',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ items: items.map(i => ({ product_id: i.product_id, quantity: i.quantity })) }),
+    });
+  } catch (_) { /* best-effort */ }
 }
 
 function loadCart() {
@@ -370,6 +385,103 @@ function jsonHeaders() {
 
 function esc(str) {
   return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ─── Demo chips ───────────────────────────────────────────────────────────────
+
+function bindDemoChips() {
+  const chips = document.getElementById('demo-chips');
+  if (!chips) return;
+  chips.addEventListener('click', e => {
+    const chip = e.target.closest('.demo-chip');
+    if (!chip) return;
+    const msg = chip.dataset.msg;
+    if (!msg) return;
+    document.getElementById('chat-input').value = msg;
+    sendChat();
+  });
+}
+
+// ─── Catalog ──────────────────────────────────────────────────────────────────
+
+const catalogState = {
+  products: [],
+  loaded: false,
+};
+
+function bindCatalog() {
+  document.getElementById('nav-catalog-btn').addEventListener('click', openCatalog);
+  document.getElementById('catalog-close').addEventListener('click', closeCatalog);
+  document.getElementById('catalog-search').addEventListener('input', () => {
+    renderCatalogGrid(catalogState.products);
+  });
+}
+
+function openCatalog() {
+  document.getElementById('catalog-panel').classList.remove('hidden');
+  document.getElementById('nav-catalog-btn').classList.add('active');
+  if (!catalogState.loaded) loadCatalog();
+}
+
+function closeCatalog() {
+  document.getElementById('catalog-panel').classList.add('hidden');
+  document.getElementById('nav-catalog-btn').classList.remove('active');
+}
+
+async function loadCatalog() {
+  const emptyEl = document.getElementById('catalog-empty');
+  emptyEl.textContent = 'Cargando catálogo...';
+  emptyEl.classList.remove('hidden');
+
+  try {
+    const res = await fetch(`${API}/catalog`);
+    const json = await res.json();
+    if (!json.ok) throw new Error(json.error || 'Error al cargar catálogo');
+    catalogState.products = json.data.products || [];
+    catalogState.loaded = true;
+    renderCatalogGrid(catalogState.products);
+  } catch (err) {
+    emptyEl.textContent = `Error: ${err.message}`;
+  }
+}
+
+function renderCatalogGrid(products) {
+  const grid = document.getElementById('catalog-grid');
+  const emptyEl = document.getElementById('catalog-empty');
+  const query = document.getElementById('catalog-search').value.trim().toLowerCase();
+
+  // Remove existing cards
+  grid.querySelectorAll('.product-card').forEach(el => el.remove());
+
+  const filtered = query
+    ? products.filter(p =>
+        p.name.toLowerCase().includes(query) ||
+        (p.brand || '').toLowerCase().includes(query)
+      )
+    : products;
+
+  if (filtered.length === 0) {
+    emptyEl.textContent = query ? 'Sin resultados.' : 'No hay productos disponibles.';
+    emptyEl.classList.remove('hidden');
+    return;
+  }
+
+  emptyEl.classList.add('hidden');
+
+  filtered.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'product-card';
+    const discountBadge = p.discount_pct > 0
+      ? `<span class="product-card__discount">-${p.discount_pct}%</span>`
+      : '';
+    card.innerHTML = `
+      <img class="product-card__image" src="${esc(p.image_url || '')}" alt="${esc(p.name)}" loading="lazy" />
+      <div class="product-card__name">${esc(p.name)}</div>
+      <div class="product-card__meta">${esc(p.brand || '')}${p.package_size ? ' · ' + esc(p.package_size) : ''}</div>
+      <div class="product-card__price">$${(p.price || 0).toFixed(2)}${discountBadge}</div>
+    `;
+    grid.insertBefore(card, emptyEl);
+  });
 }
 
 // ─── Audio (STT via Whisper) ──────────────────────────────────────────────────

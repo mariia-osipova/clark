@@ -267,6 +267,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._handle_preferences_put(body)
         elif path == "/api/v1/cart/remove":
             self._handle_cart_remove(body)
+        elif path == "/api/v1/cart/sync":
+            self._handle_cart_sync(body)
         elif path == "/api/v1/cart":
             self._handle_cart_add(body)
         elif path == "/api/v1/recurring-plan/generate":
@@ -522,6 +524,36 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_json(envelope(data={"removed": True}))
         except Exception as e:
             _log.error("cart remove error: %s", e, exc_info=True)
+            self.send_json(envelope(error=str(e)), 500)
+
+    def _handle_cart_sync(self, body: dict):
+        """Replace session cart with the provided items list (bulk write)."""
+        session_id = str(body.get("session_id", "") or self.headers.get("X-Session-Token", "") or "")
+        if not session_id:
+            self.send_json(envelope(error="session_id or X-Session-Token required"), 400)
+            return
+        items = body.get("items", [])
+        if not isinstance(items, list):
+            self.send_json(envelope(error="items must be a list"), 400)
+            return
+        try:
+            conn = get_db()
+            try:
+                conn.execute("DELETE FROM session_carts WHERE session_id = ?", (session_id,))
+                for item in items:
+                    pid = str(item.get("product_id", ""))
+                    qty = max(1, int(item.get("quantity", 1)))
+                    if pid:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO session_carts (session_id, product_id, quantity) VALUES (?, ?, ?)",
+                            (session_id, pid, qty),
+                        )
+                conn.commit()
+            finally:
+                conn.close()
+            self.send_json(envelope(data={"synced": len(items)}))
+        except Exception as e:
+            _log.error("cart sync error: %s", e, exc_info=True)
             self.send_json(envelope(error=str(e)), 500)
 
     # ─── Recurring plan handlers ──────────────────────────────────────────────
