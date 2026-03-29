@@ -293,11 +293,47 @@
   max-width: 680px;
 }
 
+/* ── Shared illustration image ── */
+.lp-section-img {
+  flex-shrink: 0;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 24px rgba(0,0,0,0.12));
+}
+.lp-section-img--light {
+  filter: drop-shadow(0 8px 24px rgba(0,0,0,0.25)) brightness(1.08);
+}
+
 /* ── Sección A — Problema ── */
 .lp-problem {
   background: var(--backgroundbackground-1);
   padding: 100px 0;
 }
+
+.lp-problem__inner {
+  display: flex;
+  align-items: center;
+  gap: 64px;
+}
+.lp-problem__text { flex: 1; min-width: 0; }
+
+/* ── Sección B — Features header ── */
+.lp-features__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 48px;
+  margin-bottom: 0;
+}
+.lp-features__header-text { flex: 1; min-width: 0; }
+
+/* ── Sección C — Metrics header ── */
+.lp-metrics__header {
+  display: flex;
+  align-items: center;
+  gap: 48px;
+  margin-bottom: 48px;
+}
+.lp-metrics__header-text { flex: 1; min-width: 0; }
+.lp-metrics__header-text .lp-subheading--light { margin-bottom: 0; }
 
 .lp-bullets {
   list-style: none;
@@ -609,6 +645,10 @@
   .lp-cards { grid-template-columns: 1fr; }
   .lp-metrics__grid { grid-template-columns: 1fr 1fr; }
   .lp-testimonials__grid { grid-template-columns: 1fr; }
+  .lp-problem__inner,
+  .lp-features__header,
+  .lp-metrics__header { flex-direction: column; gap: 32px; }
+  .lp-section-img { width: 140px; align-self: center; }
 }
 
 /* ─────────────────────────────────────────────────────────── */
