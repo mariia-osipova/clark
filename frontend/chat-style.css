@@ -137,6 +137,14 @@
   color: var(--textheadline-2);
 }
 
+.chat-image-preview {
+  display: block;
+  max-width: 180px;
+  max-height: 180px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
 .chat-msg--assistant {
   align-self: flex-start;
   background: var(--backgroundbackground-1);

@@ -499,6 +499,21 @@ async function describeImage(file) {
   const imgBtn = document.getElementById('btn-image');
   imgBtn.disabled = true;
   imgBtn.textContent = '⏳';
+
+  // Show a preview bubble in the thread immediately
+  const blobUrl = URL.createObjectURL(file);
+  const thread = document.getElementById('chat-thread');
+  const wrapper = thread.closest('.chat-thread-wrapper');
+  const previewEl = document.createElement('div');
+  previewEl.className = 'chat-msg chat-msg--user';
+  const previewImg = document.createElement('img');
+  previewImg.src = blobUrl;
+  previewImg.className = 'chat-image-preview';
+  previewImg.onload = () => URL.revokeObjectURL(blobUrl);
+  previewEl.appendChild(previewImg);
+  thread.appendChild(previewEl);
+  if (wrapper) wrapper.scrollTop = wrapper.scrollHeight;
+
   try {
     const arrayBuffer = await file.arrayBuffer();
     const res = await fetch(`${API}/describe-image`, {
