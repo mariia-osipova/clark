@@ -648,8 +648,8 @@
   position: relative;
   align-self: stretch;
   width: 100%;
-  min-height: 300px;
-  height: clamp(300px, 40vw, 666px);
+  min-height: 160px;
+  height: clamp(160px, 18vw, 280px);
   background-image: url(https://c.animaapp.com/Y5zUzjcR/img/footer.png);
   background-size: cover;
   background-position: 50% 50%;
