@@ -382,7 +382,7 @@ def _read_session_cart(session_id: str, catalog: list[dict]) -> list[dict]:
 
 _CLASSIFY_SYSTEM = (
     "Sos un asistente de compras. Analizá el mensaje del usuario y respondé SOLO con JSON:\n"
-    '{"turn_kind": "shopping|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection|checkout|save_cart_profile|load_cart_profile", '
+    '{"turn_kind": "shopping|remove|smalltalk|monthly_basket|suggestion_reply|suggestion_rejection|checkout|save_cart_profile|load_cart_profile", '
     '"planned_items": [{"query": "nombre producto", "quantity": 1}], "profile_name": ""}\n'
     "Para mensajes que NO son compras (saludos, preguntas generales), usá turn_kind=smalltalk "
     "y planned_items=[].\n"
@@ -451,6 +451,13 @@ _CLASSIFY_SYSTEM = (
     "\n"
     'Necesidad descriptiva → "para limpiar el baño" → '
     '{"turn_kind":"shopping","planned_items":[{"query":"limpiador para baño","quantity":1}]}\n'
+    "\n"
+    "REGLA ELIMINACIÓN: Si el usuario quiere quitar, sacar, eliminar o borrar un producto del carrito "
+    "(ej: 'quitá el aceite', 'sacá la leche', 'eliminá los fideos', 'no quiero el pan') "
+    "→ turn_kind=remove, planned_items con los productos a quitar.\n"
+    "\n"
+    '"quitá el aceite de oliva" → {"turn_kind":"remove","planned_items":[{"query":"aceite de oliva","quantity":1}]}\n'
+    '"sacá la leche y el pan" → {"turn_kind":"remove","planned_items":[{"query":"leche","quantity":1},{"query":"pan","quantity":1}]}\n'
     "\n"
     "SOLO JSON, sin markdown ni texto adicional."
 )
@@ -691,6 +698,49 @@ def _build_graph(catalog: list[dict], api_key: str):
             _write_session_cart_items(sid, items)
         return {}
 
+    # ── Node: remove_items_node ────────────────────────────────────────────────
+    def remove_items_node(state: ShopState, config: RunnableConfig) -> dict:
+        """Deterministic. Resolves each planned_item query against the current cart
+        and deletes matching rows from session_carts."""
+        from backend.db import get_db
+        from backend.product_semantic_index import resolve_product as _resolve_product
+
+        sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
+        current_cart = _read_session_cart(sid, catalog)
+        cart_by_id = {item["product_id"]: item for item in current_cart}
+
+        removed, not_found = [], []
+        for item in state.get("planned_items") or []:
+            query = item.get("query", "")
+            # Resolve against full catalog to find the canonical product
+            verdict = _resolve_product(query, 1, catalog)
+            pid = (verdict.get("product") or {}).get("id") or (verdict.get("product") or {}).get("product_id")
+            if pid and pid in cart_by_id:
+                conn = get_db()
+                try:
+                    conn.execute(
+                        "DELETE FROM session_carts WHERE session_id = ? AND product_id = ?",
+                        (sid, pid),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                removed.append(cart_by_id[pid]["name"])
+            else:
+                not_found.append(query)
+
+        if removed and not not_found:
+            reply = "Saqué del carrito: " + ", ".join(removed) + "."
+        elif removed:
+            reply = (
+                "Saqué del carrito: " + ", ".join(removed) + ". "
+                + "No encontré en tu carrito: " + ", ".join(not_found) + "."
+            )
+        else:
+            reply = "No encontré esos productos en tu carrito."
+
+        return {"reply": reply}
+
     # ── Node: emit_clarification ───────────────────────────────────────────────
     def emit_clarification(state: ShopState) -> dict:
         """Format pending_clarification for the first needs_clarification resolution."""
@@ -826,8 +876,11 @@ def _build_graph(catalog: list[dict], api_key: str):
         Fires the nudge at most once per session — if checkout_nudge_shown is True,
         skip straight to execute_checkout.
         """
+        # TODO: re-enable when ready for demo
+        return {"forgotten_suggestion": None}
+
         # Nudge already shown this session — don't repeat it
-        if state.get("checkout_nudge_shown"):
+        if state.get("checkout_nudge_shown"):  # noqa: unreachable
             return {"forgotten_suggestion": None}
 
         sid = state.get("session_id") or (config.get("configurable") or {}).get("session_id", "")
@@ -1030,6 +1083,8 @@ def _build_graph(catalog: list[dict], api_key: str):
             return "reject_suggestion"
         if turn_kind == "checkout":
             return "check_forgotten_items"
+        if turn_kind == "remove":
+            return "remove_items_node"
         if turn_kind == "save_cart_profile":
             return "save_cart_profile_node"
         if turn_kind == "load_cart_profile":
@@ -1054,6 +1109,7 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_node("emit_clarification", emit_clarification)
     graph.add_node("check_forgotten_items", check_forgotten_items)
     graph.add_node("execute_checkout", execute_checkout)
+    graph.add_node("remove_items_node", remove_items_node)
     graph.add_node("save_cart_profile_node", save_cart_profile_node)
     graph.add_node("load_cart_profile_node", load_cart_profile_node)
     graph.add_node("summarize", summarize)
@@ -1067,6 +1123,7 @@ def _build_graph(catalog: list[dict], api_key: str):
     graph.add_edge("emit_clarification", "summarize")
     graph.add_conditional_edges("check_forgotten_items", route_after_forgotten_check)
     graph.add_edge("execute_checkout", "summarize")
+    graph.add_edge("remove_items_node", "summarize")
     graph.add_edge("save_cart_profile_node", "summarize")
     graph.add_edge("load_cart_profile_node", "summarize")
     graph.add_edge("summarize", END)
