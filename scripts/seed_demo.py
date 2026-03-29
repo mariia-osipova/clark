@@ -151,10 +151,10 @@ def seed(db: sqlite3.Connection) -> None:
     )
 
     # ── Recurring plan ────────────────────────────────────────────────────────
-    db.execute("DELETE FROM recurring_plan_items WHERE plan_id = 'demo-plan-martin'")
-    db.execute("DELETE FROM recurring_plans WHERE id = 'demo-plan-martin'")
+    db.execute("DELETE FROM recurring_plan_items WHERE plan_id = 'default'")
+    db.execute("DELETE FROM recurring_plans WHERE id = 'default'")
 
-    plan_id = "demo-plan-martin"
+    plan_id = "default"
     db.execute(
         """INSERT INTO recurring_plans
                (id, household_size, monthly_budget, priority_items, preferred_brands,
@@ -164,7 +164,7 @@ def seed(db: sqlite3.Connection) -> None:
             plan_id,
             4,
             50000.0,
-            json.dumps([MILK["product_id"], EGGS["product_id"], BREAD["product_id"]]),
+            json.dumps(["leche La Serenísima", "huevos", "pan Fargo", "yerba mate", "arroz", "fideos", "aceite"]),
             json.dumps({"lácteos": "La Serenísima", "yerba": "Playadito"}),
             0,
             json.dumps([]),
@@ -206,7 +206,7 @@ def main() -> None:
     print("Done.")
     print("  ✓ 2 demo orders (7 days ago + 30 days ago)")
     print("  ✓ preferences row (key='default')")
-    print("  ✓ recurring plan 'demo-plan-martin' (3 must_have + 4 recurring items)")
+    print("  ✓ recurring plan 'default' (7 must_have items as name queries)")
 
 
 if __name__ == "__main__":

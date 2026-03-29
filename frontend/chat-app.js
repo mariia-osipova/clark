@@ -66,7 +66,7 @@ async function sendChat() {
 
     if (!json.ok) throw new Error(json.error);
 
-    const { reply, cart, clarification } = json.data;
+    const { reply, cart, clarification, proposed_cart } = json.data;
     state.chatHistory.push({ role: 'assistant', content: reply });
     appendChatMsg('assistant', reply);
 
@@ -74,6 +74,8 @@ async function sendChat() {
       showClarificationModal(clarification);
     } else if (cart) {
       setCart(cart);
+    } else if (proposed_cart && proposed_cart.length > 0) {
+      setCart(proposed_cart);
     }
   } catch (err) {
     loadingEl.remove();
