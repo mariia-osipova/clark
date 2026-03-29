@@ -325,15 +325,6 @@
 }
 .lp-features__header-text { flex: 1; min-width: 0; }
 
-/* ── Sección C — Metrics header ── */
-.lp-metrics__header {
-  display: flex;
-  align-items: center;
-  gap: 48px;
-  margin-bottom: 48px;
-}
-.lp-metrics__header-text { flex: 1; min-width: 0; }
-.lp-metrics__header-text .lp-subheading--light { margin-bottom: 0; }
 
 .lp-bullets {
   list-style: none;
@@ -436,10 +427,11 @@
 
 .lp-metric__num {
   font-family: var(--heading-1-mari-font-family);
-  font-size: clamp(2.5rem, 4vw, 3.5rem);
+  font-size: clamp(1.8rem, 2.8vw, 2.6rem);
   font-weight: 400;
   color: var(--textheadline-1);
   line-height: 1;
+  white-space: nowrap;
 }
 
 .lp-metric__label {
@@ -646,8 +638,7 @@
   .lp-metrics__grid { grid-template-columns: 1fr 1fr; }
   .lp-testimonials__grid { grid-template-columns: 1fr; }
   .lp-problem__inner,
-  .lp-features__header,
-  .lp-metrics__header { flex-direction: column; gap: 32px; }
+  .lp-features__header { flex-direction: column; gap: 32px; }
   .lp-section-img { width: 140px; align-self: center; }
 }
 
