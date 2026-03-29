@@ -87,7 +87,14 @@ OIL = {
     "price": 2998.6,
     "image_url": "https://carrefourar.vteximg.com.br/arquivos/ids/603859/7791720025291_01.jpg?v=638700617422870000",
 }
-TOILET_PAPER_PRODUCT_ID = "736162"
+TOILET_PAPER = {
+    "product_id": "736162",
+    "name": "Papel higienico doble hoja Higienol plus x4 30 mts.",
+    "brand": "Higienol",
+    "package_size": "",
+    "price": 4045.0,
+    "image_url": "https://carrefourar.vteximg.com.br/arquivos/ids/664417/7790250015536_01.jpg?v=638835174998930000",
+}
 
 
 def _cart_item(product: dict, quantity: int) -> dict:
@@ -126,7 +133,7 @@ def _build_profile(last_order_date: str) -> dict:
                 MILK["product_id"],
                 BREAD["product_id"],
                 BUTTER["product_id"],
-                TOILET_PAPER_PRODUCT_ID,
+                TOILET_PAPER["product_id"],
             ],
             "last_order_date": last_order_date,
             "avg_cart_size": 3,
@@ -166,12 +173,13 @@ def seed(db: sqlite3.Connection) -> None:
     # Delete any previously seeded demo orders so this is idempotent.
     db.execute("DELETE FROM orders WHERE id LIKE 'demo-%'")
 
-    # One prior order from two weeks ago is enough for the forgotten-item
-    # nudge and keeps the demo predictable.
+    # Last order matches frequent_items so the forgotten-item nudge fires
+    # for items Jaime usually buys but hasn't added to the current cart.
     order_items = [
         _cart_item(MILK, 1),
-        _cart_item(EGGS, 1),
         _cart_item(BREAD, 1),
+        _cart_item(BUTTER, 1),
+        _cart_item(TOILET_PAPER, 1),
     ]
     order_date = (now - timedelta(days=14)).strftime("%Y-%m-%d %H:%M:%S")
     db.execute(

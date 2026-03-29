@@ -822,13 +822,10 @@ def _build_graph(catalog: list[dict], api_key: str):
 
     # ── Node: check_forgotten_items ───────────────────────────────────────────
     def check_forgotten_items(state: ShopState, config: RunnableConfig) -> dict:
-        """Deterministic. Compares current cart against last order.
+        """Deterministic. Compares current cart against the user's frequent items.
         Fires the nudge at most once per session — if checkout_nudge_shown is True,
         skip straight to execute_checkout.
         """
-        from datetime import datetime
-        from backend.db import get_last_order
-
         # Nudge already shown this session — don't repeat it
         if state.get("checkout_nudge_shown"):
             return {"forgotten_suggestion": None}
@@ -837,33 +834,41 @@ def _build_graph(catalog: list[dict], api_key: str):
         current_cart = _read_session_cart(sid, catalog)
         current_ids = {item["product_id"] for item in current_cart}
 
-        last_order = get_last_order()
-        if not last_order or not last_order.get("cart"):
+        # Use frequent_items from user profile — stable across sessions, not polluted
+        # by test/canasta orders the way get_last_order() would be.
+        profile = state.get("user_profile") or {}
+        frequent_ids: list[str] = (profile.get("purchase_history") or {}).get("frequent_items", [])
+        if not frequent_ids:
             return {"forgotten_suggestion": None}
 
-        missing = [
-            item for item in last_order["cart"]
-            if item.get("product_id") not in current_ids
-        ]
-        if not missing:
+        missing_id = next((pid for pid in frequent_ids if pid not in current_ids), None)
+        if not missing_id:
             return {"forgotten_suggestion": None}
 
-        forgotten = missing[0]
-        try:
-            order_dt = datetime.strptime(last_order["created_at"][:19], "%Y-%m-%d %H:%M:%S")
-            days_ago = (datetime.utcnow() - order_dt).days
-        except Exception:
-            days_ago = 0
+        catalog_by_id = {p["id"]: p for p in catalog}
+        product = catalog_by_id.get(missing_id)
+        if not product:
+            return {"forgotten_suggestion": None}
+
+        last_order_date = (profile.get("purchase_history") or {}).get("last_order_date", "")
+        days_ago = 0
+        if last_order_date:
+            try:
+                from datetime import datetime
+                order_dt = datetime.strptime(last_order_date[:19], "%Y-%m-%d %H:%M:%S")
+                days_ago = (datetime.utcnow() - order_dt).days
+            except Exception:
+                pass
 
         return {
             "forgotten_suggestion": {
-                "product_id": forgotten.get("product_id", ""),
-                "name": forgotten.get("name", ""),
-                "quantity": forgotten.get("quantity", 1),
-                "price": forgotten.get("price", 0.0),
+                "product_id": missing_id,
+                "name": product["name"],
+                "quantity": 1,
+                "price": product["price"],
                 "days_ago": days_ago,
             },
-            "checkout_nudge_shown": True,   # mark as shown so it won't repeat
+            "checkout_nudge_shown": True,
         }
 
     # ── Node: execute_checkout ─────────────────────────────────────────────────
@@ -891,7 +896,8 @@ def _build_graph(catalog: list[dict], api_key: str):
                 "order_id": order_id,
                 "total": total,
                 "item_count": len(current_cart),
-            }
+            },
+            "checkout_nudge_shown": False,  # reset so next shopping session gets a fresh nudge
         }
 
     # ── Node: save_cart_profile_node ──────────────────────────────────────────

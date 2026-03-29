@@ -340,30 +340,12 @@ function bindCartEvents() {
     document.getElementById('cart-panel').classList.toggle('hidden');
   });
 
-  document.getElementById('btn-checkout').addEventListener('click', checkout);
-}
-
-async function checkout() {
-  if (state.cart.length === 0) return;
-  const btn = document.getElementById('btn-checkout');
-  btn.disabled = true;
-  try {
-    const res = await fetch(`${API}/orders`, {
-      method: 'POST',
-      headers: jsonHeaders(),
-      body: JSON.stringify({ cart: state.cart }),
-    });
-    const json = await res.json();
-    if (!json.ok) throw new Error(json.error);
-    state.cart = [];
-    saveCart();
-    renderCart();
-    appendChatMsg('assistant', `¡Pedido confirmado! (#${json.data.order_id}) — Total: $${json.data.total.toFixed(2)}`);
-  } catch (err) {
-    appendChatMsg('assistant', `Error al confirmar pedido: ${err.message}`);
-  } finally {
-    btn.disabled = false;
-  }
+  document.getElementById('btn-checkout').addEventListener('click', () => {
+    if (state.cart.length === 0) return;
+    document.getElementById('cart-panel').classList.add('hidden');
+    document.getElementById('chat-input').value = 'Confirmar pedido';
+    sendChat();
+  });
 }
 
 async function syncCartToServer(items) {
