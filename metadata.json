@@ -1,0 +1,10 @@
+{
+  "name": "Clark",
+  "description": "AI shopping assistant with smart grocery basket generation, semantic catalog search, and conversational cart management.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
